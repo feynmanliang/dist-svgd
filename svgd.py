@@ -1,8 +1,13 @@
 import math
-import torch
 
+import torch
 from torch.distributions.normal import Normal
 from torch.distributions.transformed_distribution import TransformedDistribution
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 p1 = Normal(-2, 1)
 p2 = Normal(2, 1)
@@ -29,8 +34,8 @@ def dkernel(x, y):
 
 q = Normal(-10, 1)
 
-n = 10
-num_iter = 200
+n = 50
+num_iter = 500
 step_size = 1e-0;
 
 def phi_hat(particle, particles):
@@ -41,8 +46,33 @@ def phi_hat(particle, particles):
 
 particles = q.sample(torch.Size([n, 1]))
 
+data = []
+
 for l in range(num_iter):
-    print('iter ' + str(l))
     for (i, particle) in enumerate(particles):
         particles[i] = particle + step_size * phi_hat(particle, particles)
+        if l % 5 == 0:
+            data.append(pd.Series([l, i, particles[i].numpy()[0]], index=['timestep', 'particle', 'value']))
     print(particles.mean())
+
+df = pd.DataFrame(data)
+
+sns.set()
+g = sns.catplot(
+        x='timestep',
+        y='value',
+        kind='violin',
+        data=df)
+
+g.set(xlim=(-12,8))
+
+plt.show()
+
+f, axes = plt.subplots(1, 6, figsize=(9,2))
+for (i, timestep) in enumerate([0, 50, 75, 100, 150, 500]):
+    sns.kdeplot(
+            df[df['timestep'] == timestep].value,
+            shade=True,
+            legend=False,
+            ax=axes[i])
+    axes[i].set_title('Timestep {}'.format(timestep))
