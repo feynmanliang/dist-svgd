@@ -48,7 +48,7 @@ particles = q.sample(torch.Size([n, 1]))
 
 data = []
 
-for l in range(num_iter):
+for l in range(num_iter+1):
     for (i, particle) in enumerate(particles):
         particles[i] = particle + step_size * phi_hat(particle, particles)
         if l % 5 == 0:
@@ -76,3 +76,5 @@ for (i, timestep) in enumerate([0, 50, 75, 100, 150, 500]):
             legend=False,
             ax=axes[i])
     axes[i].set_title('Timestep {}'.format(timestep))
+
+f.savefig('figures/gmm.png')
