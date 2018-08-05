@@ -2,6 +2,7 @@ import math
 
 import torch
 from torch.distributions.normal import Normal
+from torch.distributions.transformed_distribution import TransformedDistribution
 
 import numpy as np
 import pandas as pd
