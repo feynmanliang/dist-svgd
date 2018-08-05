@@ -20,13 +20,14 @@ def logp(x):
 def kernel(x, y):
     return torch.exp(-1.*torch.dist(x, y, p=2)**2)
 
-n = 50
+n = 5
 d = 1
-num_iter = 150
+num_iter = 5
 step_size = 1e-0;
 
 sampler = dsvgd.sampler.Sampler(d, logp, kernel)
 df = sampler.sample(n, num_iter, step_size)
+df['value'] = df['value'].map(lambda x: x[0])
 
 sns.set()
 g = sns.catplot(
