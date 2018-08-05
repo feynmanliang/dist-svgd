@@ -82,7 +82,7 @@ baseline_test_acc = (LogisticRegression()
 
 g = sns.relplot(x='timestep', y='value', hue='variable', kind='line', data=test_accs)
 plt.axhline(baseline_test_acc, color='r')
-g.savefig(os.path.join(FIGURES_DIR, 'figures/logreg-{}-test-acc.png'.format(dataset_name)))
+g.savefig(os.path.join(FIGURES_DIR, 'logreg-{}-test-acc.png'.format(dataset_name)))
 
 
 g = sns.FacetGrid(df[df['timestep'] % 20 == 0], col="timestep")
