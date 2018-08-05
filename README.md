@@ -3,6 +3,17 @@
 This repo contains code which performs some experiments on SVGD
 (see https://arxiv.org/abs/1608.04471).
 
+## Reproducing experiments
+
+Get set up
+```bash
+pip install -r requirements.txt
+```
+
+Run the experiments
+```bash
+python experiments/logreg.py
+```
 
 ## Project Organization
  - `dsvgd/` : code for the sampler

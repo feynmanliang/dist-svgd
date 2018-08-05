@@ -1,3 +1,5 @@
+import os
+
 from scipy.io import loadmat
 import numpy as np
 import pandas as pd
@@ -11,13 +13,19 @@ from torch.distributions.gamma import Gamma
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.normal import Normal
 
-mat = loadmat('data/benchmarks.mat')
+from definitions import DATA_DIR, FIGURES_DIR
+import dsvgd.sampler
 
+torch.manual_seed(42)
+
+# Load data
 dataset_name = 'banana'
+
+mat = loadmat(os.path.join(DATA_DIR, 'benchmarks.mat'))
 dataset = mat[dataset_name][0, 0]
 
-#for fold in x_train.shape[0]:
-fold = 42
+
+fold = 42 # use 42 train/test split
 
 # split #, instance, features/label
 x_train = torch.from_numpy(dataset[0][dataset[2] - 1][fold]).to(torch.float)
@@ -25,14 +33,15 @@ t_train = dataset[1][dataset[2] - 1][fold]
 x_test = dataset[0][dataset[3] - 1][fold]
 t_test = dataset[1][dataset[3] - 1][fold]
 
-# TODO: train on x_train[fold], eval on x_test[fold]
+# Define model
+d = 3
 
 alpha_prior = Gamma(1, 1)
 w_prior = lambda alpha: MultivariateNormal(torch.zeros(x_train.shape[1]), torch.eye(x_train.shape[1]) / alpha)
 
 def logp(x):
     alpha = torch.exp(x[0])
-    w = x[1:].reshape((2,))
+    w = x[1:3].reshape((2,))
     logp = alpha_prior.log_prob(alpha)
     logp += w_prior(alpha).log_prob(w)
     logp += -torch.log(1. + torch.exp(-1.*torch.matmul(t_train * x_train, w))).sum()
@@ -41,52 +50,23 @@ def logp(x):
 def kernel(x, y):
     return torch.exp(-1.*torch.dist(x, y, p=2)**2)
 
-def dkernel(x, y):
-    "Returns \nabla_x k(x,y)."
-    _x = x.detach()
-    _y = y.detach()
-    _x.requires_grad_(True)
-    _y.requires_grad_(False)
-    kernel(_x, _y).backward()
-    return _x.grad
+sampler = dsvgd.sampler.Sampler(d, logp, kernel)
 
-def dlogp(x):
-    "Returns \nabla_x log p(x)"
-    _x = x.detach()
-    _x.requires_grad_(True)
-    logp(_x).backward()
-    return _x.grad
-
+# Define sampling parameters
 n = 50
 num_iter = 200
 step_size = 1e-3
 
-def phi_hat(particle, particles):
-    total = torch.zeros(particle.size())
-    for i,other_particle in enumerate(particles):
-        total += kernel(other_particle, particle) * dlogp(other_particle) + dkernel(other_particle, particle)
-    return (1.0 / n) * total
+# Run sampler
+df = sampler.sample(n, num_iter, step_size)
 
-q = Normal(0, 1)
-make_sample = lambda: torch.cat([q.sample((1,1)) - 0.5, q.sample((1,1)), q.sample((1,1))])
-particles = torch.cat([make_sample() for _ in range(n)], dim=1).t()
-
-data = []
-
-for l in range(num_iter+1):
-    print('Iteration {}'.format(l))
-    for (i, particle) in enumerate(particles):
-        particles[i] = particle + step_size * phi_hat(particle, particles)
-        data.append(pd.Series([l, i, torch.tensor(particles[i]).numpy()], index=['timestep', 'particle', 'value']))
-
-
+# Post-process and plot
 def test_acc(values):
     alpha = np.exp(values[0])
     w = values[1:]
     accuracy = ((x_test.dot(w) > 0).reshape(-1) == (t_test > 0).reshape(-1)).mean()
     return accuracy
 
-df = pd.DataFrame(data)
 test_accs = (df
     .groupby('timestep', as_index=False)
     .apply(lambda x: pd.Series({
@@ -102,7 +82,7 @@ baseline_test_acc = (LogisticRegression()
 
 g = sns.relplot(x='timestep', y='value', hue='variable', kind='line', data=test_accs)
 plt.axhline(baseline_test_acc, color='r')
-g.savefig('figures/logreg-{}-test-acc.png'.format(dataset_name))
+g.savefig(os.path.join(FIGURES_DIR, 'figures/logreg-{}-test-acc.png'.format(dataset_name)))
 
 
 g = sns.FacetGrid(df[df['timestep'] % 20 == 0], col="timestep")
@@ -111,4 +91,4 @@ def plot_kde(value, *args, **kwargs):
     ax = sns.kdeplot(ps[:,0],ps[:,1], *args, **kwargs)
     return ax
 g.map(plot_kde, 'value')
-g.savefig('figures/logreg-{}-kde.png'.format(dataset_name))
+g.savefig(os.path.join(FIGURES_DIR, 'logreg-{}-kde.png'.format(dataset_name)))
