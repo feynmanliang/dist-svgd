@@ -30,16 +30,13 @@ t_test = dataset[1][dataset[3] - 1][fold]
 alpha_prior = Gamma(1, 1)
 w_prior = lambda alpha: MultivariateNormal(torch.zeros(x_train.shape[1]), torch.eye(x_train.shape[1]) / alpha)
 
-def dlogp(x):
-    _x = x.detach()
-    _x.requires_grad_(True)
-    alpha = torch.exp(_x[0])
-    w = _x[1:].reshape((2,))
+def logp(x):
+    alpha = torch.exp(x[0])
+    w = x[1:].reshape((2,))
     logp = alpha_prior.log_prob(alpha)
     logp += w_prior(alpha).log_prob(w)
     logp += -torch.log(1. + torch.exp(-1.*torch.matmul(t_train * x_train, w))).sum()
-    logp.backward()
-    return _x.grad
+    return logp
 
 def kernel(x, y):
     return torch.exp(-1.*torch.dist(x, y, p=2)**2)
@@ -47,11 +44,18 @@ def kernel(x, y):
 def dkernel(x, y):
     "Returns \nabla_x k(x,y)."
     _x = x.detach()
+    _y = y.detach()
     _x.requires_grad_(True)
-    dkernel = kernel(_x, y)
-    dkernel.backward()
+    _y.requires_grad_(False)
+    kernel(_x, _y).backward()
     return _x.grad
 
+def dlogp(x):
+    "Returns \nabla_x log p(x)"
+    _x = x.detach()
+    _x.requires_grad_(True)
+    logp(_x).backward()
+    return _x.grad
 
 n = 50
 num_iter = 200
