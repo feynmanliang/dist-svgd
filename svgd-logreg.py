@@ -11,7 +11,7 @@ from torch.distributions.gamma import Gamma
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.normal import Normal
 
-mat = loadmat('data/benchmarks_v6.mat')
+mat = loadmat('data/benchmarks.mat')
 
 dataset_name = 'banana'
 dataset = mat[dataset_name][0, 0]
@@ -54,7 +54,7 @@ def dkernel(x, y):
 
 
 n = 50
-num_iter = 50
+num_iter = 200
 step_size = 1e-3
 
 def phi_hat(particle, particles):
@@ -75,7 +75,6 @@ for l in range(num_iter+1):
         particles[i] = particle + step_size * phi_hat(particle, particles)
         data.append(pd.Series([l, i, torch.tensor(particles[i]).numpy()], index=['timestep', 'particle', 'value']))
 
-df = pd.DataFrame(data)
 
 def test_acc(values):
     alpha = np.exp(values[0])
@@ -83,20 +82,29 @@ def test_acc(values):
     accuracy = ((x_test.dot(w) > 0).reshape(-1) == (t_test > 0).reshape(-1)).mean()
     return accuracy
 
-mean_test_acc = df.groupby('timestep', as_index=False).aggregate({'value': lambda x: x.map(test_acc).mean()})
+df = pd.DataFrame(data)
+test_accs = (df
+    .groupby('timestep', as_index=False)
+    .apply(lambda x: pd.Series({
+        'timestep': x['timestep'].max(),
+        'mean_test_acc': x['value'].map(test_acc).mean(),
+        'max_test_acc': x['value'].map(test_acc).max()
+    }))
+    .melt(id_vars=['timestep']))
 
 baseline_test_acc = (LogisticRegression()
         .fit(x_train, t_train.reshape(-1))
         .score(x_test, t_test.reshape(-1)))
 
-g = sns.relplot(x='timestep', y='value', kind='line', data=mean_test_acc)
-plt.axhline(baseline_test_acc, color='r', linestyle='-')
+g = sns.relplot(x='timestep', y='value', hue='variable', kind='line', data=test_accs)
+plt.axhline(baseline_test_acc, color='r')
+g.savefig('figures/logreg-{}-test-acc.png'.format(dataset_name))
 
 
-g = sns.FacetGrid(df[df['timestep'] % 10 == 0], col="timestep")
+g = sns.FacetGrid(df[df['timestep'] % 20 == 0], col="timestep")
 def plot_kde(value, *args, **kwargs):
     ps = np.stack(value.values)[:,1:]
     ax = sns.kdeplot(ps[:,0],ps[:,1], *args, **kwargs)
     return ax
 g.map(plot_kde, 'value')
-g.savefig('figures/logreg-{}.png'.format(dataset_name))
+g.savefig('figures/logreg-{}-kde.png'.format(dataset_name))
