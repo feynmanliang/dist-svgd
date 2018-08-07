@@ -6,7 +6,7 @@ import torch
 from torch.distributions.normal import Normal
 
 from definitions import FIGURES_DIR
-import dsvgd.sampler
+import dsvgd
 
 torch.manual_seed(42)
 
@@ -23,7 +23,7 @@ def logp(x):
 def kernel(x, y):
     return torch.exp(-1.*torch.dist(x, y, p=2)**2)
 
-sampler = dsvgd.sampler.Sampler(d, logp, kernel)
+sampler = dsvgd.Sampler(d, logp, kernel)
 
 # Define sampling parameters
 n = 5

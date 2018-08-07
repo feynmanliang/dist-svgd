@@ -14,7 +14,7 @@ from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.normal import Normal
 
 from definitions import DATA_DIR, FIGURES_DIR
-import dsvgd.sampler
+import dsvgd
 
 torch.manual_seed(42)
 
@@ -50,7 +50,7 @@ def logp(x):
 def kernel(x, y):
     return torch.exp(-1.*torch.dist(x, y, p=2)**2)
 
-sampler = dsvgd.sampler.Sampler(d, logp, kernel)
+sampler = dsvgd.Sampler(d, logp, kernel)
 
 # Define sampling parameters
 n = 50
@@ -61,6 +61,7 @@ step_size = 1e-3
 df = sampler.sample(n, num_iter, step_size)
 
 # Post-process and plot
+sns.set()
 def test_acc(values):
     alpha = np.exp(values[0])
     w = values[1:]

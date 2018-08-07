@@ -70,6 +70,10 @@ Some remarks:
 
  * Travelling particles. Load-balancing and trajectory sampling w/ importance reweighting following http://proceedings.mlr.press/v32/ahn14.html
      * Step-size (via reweighting the local score function estimates) used to adjust bias (e.g. imbalanced datasets, more steps made on a faster shard)
+     * Travelling particles means more than just minibatches; **the local particles are also random**.
+        * $q$ is now a mixture distribution, with number of components scaling exponentially $O(s^l)$ (each
+          component corresponds to all the shards a particle has previously been in)
+        * Might be able to be smart and route particles with large pairwise kernel values to same nodes
 
  * Use local gradient $\sum_{j \in N_s} \nabla_{x_i} \log p(D_j \mid x_i)$ as surrogate, importance sampling reweighting
  $$
