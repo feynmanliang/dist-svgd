@@ -60,10 +60,13 @@ E_D E_{x \sim q}[A_{p_{x \mid D}} k(x, \cdot)] = E_{x \sim q}[k(x, \cdot) E_D[\n
 $$
 
 Some remarks:
+ * $q_0$ is set by modeller, could be modelled as random in which case we would need $D \perp q_0$ i.e. cannot peek at data to set initial variational distribution
  * We already made one MC approximation when we used the empirical dataset to estimate $E_D$, but this is fairly well justified by Glivenko-Cantelli
    and inevitable since we don't have $p(D)$ nor infinite data.
  * We made another MC approximation when we used particles to approximation $E_q$.
  * Yet another MC approximation is being made to estimate the empirical sum of scores with a subsampled sum of scores.
+
+TODO: Only showed unbiased, need to also bound variance and show goes to zero asymp.
 
 
 ## Other ideas for distributed computation
@@ -82,6 +85,37 @@ Some remarks:
    * This only needs to communicate $n$ (num particles) scalar values corresponding to likelihoods of each particle on each
      shard, which can be more efficient than communicating full gradients ($n \times d$)
    * Bias correction is different than Ahn 2014, which use dataset size on each shard as weight
+
+# Algorithms
+
+Assume data cannot fit on single machine.
+
+## Small number of particles $n$
+
+Small number of particles => can `all_gather` all the particles (cost $s \times n/s \times s = n \times s$),
+so every machine has a full copy of $x$.
+ * No approximation of $k(x,x')$ terms
+ * Each machine responsible for updating a subset of the particles
+
+$dim(x_i) = d$ small => $dim()\nabla_{x_i} \log p(x)) = d$ small, can `all_gather` and recover exact algorithm
+with additional cost ($s \times (n/s) \times d \times s = n \times d \times s$).
+
+Communication avoiding or high dimension, avoids sending gradient:
+ * Score function $\nabla_{x_i} \log p(x)$ is approximated
+   * Can be adjusted using Gradient-Free SVGD method by sending both particles $x_i$ as well as log likelihoods $\log p(D_s \mid x_i)$,
+     treating local gradient as surrogate.
+
+## Large number of particles $n$
+
+If $n$ too large to communicate but small enough to fit in memory
+ * Like SVRG, maintain full $x$ on each shard, updating with most recent copy of $x_i$s received.
+ * Compute $k(x,x')$ using local copy, may be stale but not by too much if particles are scheduled fairly across workers
+
+If $n$ too large to even fit in memory
+ * Neglect small $k(x,x')$ terms (e.g. compact kenel)
+
+
+# Results
 
 ## Timing results
 `dist.py` distributed logistic regression, 50 particles 500 iterations on 'banana' split 42, 3e-3 step size
