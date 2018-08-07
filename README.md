@@ -5,14 +5,25 @@ This repo contains code which performs some experiments on SVGD
 
 ## Reproducing experiments
 
-Get set up
+Get set up, installing local directy as a python module
 ```bash
 pip install -r requirements.txt
+pip install -e .
 ```
 
-Run the experiments
+Run the single machine experiments
 ```bash
 python experiments/logreg.py
+```
+
+To run a distributed experiment
+```bash
+python -m torch.distributed.launch --nproc_per_node=2 experiments/dist.py
+```
+This will output results from each worker in `experiments/results/`.
+To generate plots following this
+```bash
+python experiments/dist-plots.py
 ```
 
 ## Project Organization
