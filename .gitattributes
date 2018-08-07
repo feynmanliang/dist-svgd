@@ -1,2 +1,2 @@
-experiments/data filter=lfs diff=lfs merge=lfs -text
-experiments/figures filter=lfs diff=lfs merge=lfs -text
+experiments/data/** filter=lfs diff=lfs merge=lfs -text
+experiments/figures/** filter=lfs diff=lfs merge=lfs -text
