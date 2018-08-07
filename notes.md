@@ -84,9 +84,13 @@ Some remarks:
    * Bias correction is different than Ahn 2014, which use dataset size on each shard as weight
 
 ## Timing results
-`dist.py` distributed logistic regression, 50 particles 200 iterations on 'banana' split 42
+`dist.py` distributed logistic regression, 50 particles 500 iterations on 'banana' split 42, 3e-3 step size
+
+world size 1 on single machine implementation, which avoids network overhead
+
 | world size | wall time (s) |
 | --- | --- |
-| 8 | 19.247 |
-| 4 | 39.332 |
-| 2 | 127.11 |
+| 8 | 59.353 |
+| 4 | 157.17|
+| 2 | 538.59 |
+| 1 | 2007.11 |

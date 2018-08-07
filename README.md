@@ -18,12 +18,12 @@ python experiments/logreg.py
 
 To run a distributed experiment
 ```bash
-python -m torch.distributed.launch --nproc_per_node=2 experiments/dist.py
+python -m torch.distributed.launch --nproc_per_node=<world_size> experiments/dist-logreg.py
 ```
 This will output results from each worker in `experiments/results/`.
 To generate plots following this
 ```bash
-python experiments/dist-plots.py
+python experiments/dist-logreg-plots.py <world_size>
 ```
 
 ## Project Organization

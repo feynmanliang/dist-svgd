@@ -54,8 +54,8 @@ sampler = dsvgd.Sampler(d, logp, kernel)
 
 # Define sampling parameters
 n = 50
-num_iter = 200
-step_size = 1e-3
+num_iter = 500
+step_size = 3e-3
 
 # Run sampler
 df = sampler.sample(n, num_iter, step_size)
