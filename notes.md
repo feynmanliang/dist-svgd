@@ -82,3 +82,11 @@ Some remarks:
    * This only needs to communicate $n$ (num particles) scalar values corresponding to likelihoods of each particle on each
      shard, which can be more efficient than communicating full gradients ($n \times d$)
    * Bias correction is different than Ahn 2014, which use dataset size on each shard as weight
+
+## Timing results
+`dist.py` distributed logistic regression, 50 particles 200 iterations on 'banana' split 42
+| world size | wall time (s) |
+| --- | --- |
+| 8 | 19.247 |
+| 4 | 39.332 |
+| 2 | 127.11 |
