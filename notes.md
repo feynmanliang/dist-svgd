@@ -111,7 +111,7 @@ If $n$ too large to communicate but small enough to fit in memory ("laggedlocal"
  * Like SVRG, maintain full $x$ on each shard, updating with most recent copy of $x_i$s received.
  * Compute $k(x,x')$ using local copy, may be stale but not by too much if particles are scheduled fairly across workers
 
-??Continue updating all local $x_i$ but overwrite with received?
+Continue updating all local $x_i$ but overwrite with received? ("laggedlocal-updateall")
 
 If $n$ too large to even fit in memory
  * Neglect small $k(x,x')$ terms (e.g. compact kernel)
@@ -130,3 +130,6 @@ world size 1 on single machine implementation, which avoids network overhead
 | 4 | 157.17|
 | 2 | 538.59 |
 | 1 | 2007.11 |
+
+8-laggedlocal (226.24)
+8-laggedlocal-updateall (2770.66)

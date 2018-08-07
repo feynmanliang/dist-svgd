@@ -26,8 +26,8 @@ def kernel(x, y):
 sampler = dsvgd.Sampler(d, logp, kernel)
 
 # Define sampling parameters
-n = 5
-num_iter = 5
+n = 50
+num_iter = 500
 step_size = 1e-0;
 
 # Run sampler

@@ -83,7 +83,7 @@ def run():
     make_sample = lambda: q.sample((d, 1))
     particles = torch.cat([make_sample() for _ in range(n)], dim=1).t()
 
-    # particles "owned" (i.e. updated) by this shard
+    # particles currently "owned" by this shard (i.e. exchanged at end of iteration)
     particle_start_idx, particle_end_idx = particle_idx_range(rank)
 
     data = []
@@ -96,7 +96,12 @@ def run():
         for i in range(particle_start_idx, particle_end_idx):
             data.append(pd.Series([l, i, torch.tensor(particles[i]).numpy()], index=['timestep', 'particle', 'value']))
 
-        particles_to_update = particles[particle_start_idx:particle_end_idx,:]
+        # Only update "owned" particles
+        # particles_to_update = particles[particle_start_idx:particle_end_idx,:]
+
+        # Update all local particles, regardless of "owned" or not
+        # NOTE: this makes the algorithm much slower, lose parallelism via sharding particles
+        particles_to_update = particles
 
         # Interact only with particles assigned to this worker at this iteration
         # interacting_particles = particles_to_update
@@ -110,10 +115,14 @@ def run():
                 interacting_particles,
                 step_size)
 
+
         # round-robin exchange particles
         send_to_rank = (rank + 1) % num_shards
-        req = dist.isend(tensor=particles_to_update.contiguous(), dst=send_to_rank)
+        # only send "owned" particles
+        particles_to_send = particles[particle_start_idx:particle_end_idx,:]
+        req = dist.isend(tensor=particles_to_send.contiguous(), dst=send_to_rank)
 
+        # receive new particles into indices owned by other shard
         recv_from_rank = (rank - 1 + num_shards) % num_shards
         particle_start_idx, particle_end_idx = particle_idx_range(recv_from_rank)
         new_particles = torch.empty_like(particles[particle_start_idx:particle_end_idx,:])
