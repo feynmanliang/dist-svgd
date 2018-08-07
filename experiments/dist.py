@@ -70,7 +70,7 @@ def run():
 
     # Define sampling parameters
     n = 50
-    num_iter = 250
+    num_iter = 500
     step_size = 3e-3
 
     # Run sampler
