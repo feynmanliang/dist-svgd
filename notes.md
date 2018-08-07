@@ -78,14 +78,6 @@ TODO: Only showed unbiased, need to also bound variance and show goes to zero as
           component corresponds to all the shards a particle has previously been in)
         * Might be able to be smart and route particles with large pairwise kernel values to same nodes
 
- * Use local gradient $\sum_{j \in N_s} \nabla_{x_i} \log p(D_j \mid x_i)$ as surrogate, importance sampling reweighting
- $$
- w_j = {\rho(x_i) \over p(x_i)} = \frac{\prod_{j \in N_s} p(D_j \mid x_i)}{\prod_{s=1}^S \prod_{j \in N_s} p(D_j \mid x_i)}
- $$
-   * This only needs to communicate $n$ (num particles) scalar values corresponding to likelihoods of each particle on each
-     shard, which can be more efficient than communicating full gradients ($n \times d$)
-   * Bias correction is different than Ahn 2014, which use dataset size on each shard as weight
-
 # Algorithms
 
 Assume data cannot fit on single machine.
@@ -104,15 +96,25 @@ Communication avoiding or high dimension, avoids sending gradient:
  * Score function $\nabla_{x_i} \log p(x)$ is approximated
    * Can be adjusted using Gradient-Free SVGD method by sending both particles $x_i$ as well as log likelihoods $\log p(D_s \mid x_i)$,
      treating local gradient as surrogate.
+ * Use local gradient $\sum_{j \in N_s} \nabla_{x_i} \log p(D_j \mid x_i)$ as surrogate, importance sampling reweighting
+ $$
+ w_j = {\rho(x_i) \over p(x_i)} = \frac{\prod_{j \in N_s} p(D_j \mid x_i)}{\prod_{s=1}^S \prod_{j \in N_s} p(D_j \mid x_i)}
+ $$
+   * This only needs to communicate $n$ (num particles) scalar values corresponding to likelihoods of each particle on each
+     shard, which can be more efficient than communicating full gradients ($n \times d$)
+   * Bias correction is different than Ahn 2014, which use dataset size on each shard as weight
+
 
 ## Large number of particles $n$
 
-If $n$ too large to communicate but small enough to fit in memory
+If $n$ too large to communicate but small enough to fit in memory ("laggedlocal")
  * Like SVRG, maintain full $x$ on each shard, updating with most recent copy of $x_i$s received.
  * Compute $k(x,x')$ using local copy, may be stale but not by too much if particles are scheduled fairly across workers
 
+??Continue updating all local $x_i$ but overwrite with received?
+
 If $n$ too large to even fit in memory
- * Neglect small $k(x,x')$ terms (e.g. compact kenel)
+ * Neglect small $k(x,x')$ terms (e.g. compact kernel)
 
 
 # Results

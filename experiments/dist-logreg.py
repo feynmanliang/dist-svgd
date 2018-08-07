@@ -73,10 +73,18 @@ def run():
     num_iter = 500
     step_size = 3e-3
 
+    def particle_idx_range(rank):
+        particles_per_shard = int(n / num_shards)
+        return (particles_per_shard * rank, particles_per_shard * (rank+1))
+    particle_start_idx, particle_end_idx = particle_idx_range(rank)
+
     # Run sampler
     q = Normal(0, 1)
     make_sample = lambda: q.sample((d, 1))
-    particles = torch.cat([make_sample() for _ in range(int(n / num_shards))], dim=1).t()
+    particles = torch.cat([make_sample() for _ in range(n)], dim=1).t()
+
+    # particles "owned" (i.e. updated) by this shard
+    particle_start_idx, particle_end_idx = particle_idx_range(rank)
 
     data = []
 
@@ -85,26 +93,39 @@ def run():
             print('Iteration {}'.format(l))
 
         # save results right before updating particles
-        for (i, particle) in enumerate(particles):
+        for i in range(particle_start_idx, particle_end_idx):
             data.append(pd.Series([l, i, torch.tensor(particles[i]).numpy()], index=['timestep', 'particle', 'value']))
 
-        particles = dist_sampler.make_step(particles, step_size).contiguous()
+        particles_to_update = particles[particle_start_idx:particle_end_idx,:]
+
+        # Interact only with particles assigned to this worker at this iteration
+        # interacting_particles = particles_to_update
+
+        # Interact with local copy of all particles
+        interacting_particles = particles
+
+        # mutates in place
+        dist_sampler.make_step(
+                particles_to_update,
+                interacting_particles,
+                step_size)
 
         # round-robin exchange particles
         send_to_rank = (rank + 1) % num_shards
-        req = dist.isend(tensor=particles, dst=send_to_rank)
+        req = dist.isend(tensor=particles_to_update.contiguous(), dst=send_to_rank)
 
         recv_from_rank = (rank - 1 + num_shards) % num_shards
-        new_particles = particles.new_empty(particles.shape)
+        particle_start_idx, particle_end_idx = particle_idx_range(recv_from_rank)
+        new_particles = torch.empty_like(particles[particle_start_idx:particle_end_idx,:])
         req2 = dist.irecv(tensor=new_particles, src=recv_from_rank)
 
         req.wait()
         req2.wait()
 
-        particles = new_particles
+        particles[particle_start_idx:particle_end_idx,:] = new_particles
 
     # save results after last update
-    for (i, particle) in enumerate(particles):
+    for i in range(particle_start_idx, particle_end_idx):
         data.append(pd.Series([l+1, i, torch.tensor(particles[i]).numpy()], index=['timestep', 'particle', 'value']))
     pd.DataFrame(data).to_pickle(os.path.join(RESULTS_DIR, 'shard-{}.pkl'.format(rank)))
 

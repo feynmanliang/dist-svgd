@@ -39,17 +39,18 @@ class DistSampler(object):
                     + self._dkernel(other_particle, particle))
         return (1.0 / particles.shape[0]) * total
 
-    def make_step(self, particles, step_size):
+    def make_step(self, particles_to_update, interacting_particles, step_size):
         """Performs one step of SVGD.
 
         Params:
-            particles - particles to update (mutated in-place)
+            particles_to_update - particles to update (mutated in-place)
+            interacting_particles - particles to compute interactions with, should include `particles`
             step_size - step size
 
         Returns:
             reference to `particles`
         """
-        for (i, particle) in enumerate(particles):
-            particles[i] = particle + step_size * self._phi_hat(particle, particles)
+        for (i, particle) in enumerate(particles_to_update):
+            particles_to_update[i] = particle + step_size * self._phi_hat(particle, interacting_particles)
 
-        return particles
+        return particles_to_update
