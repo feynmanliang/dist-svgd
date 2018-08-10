@@ -126,7 +126,7 @@ def cli(nproc, nparticles, niter, stepsize, exchange, wasserstein, master_addr, 
         for p in processes:
             p.join()
 
-    make_plots(nproc)
+    make_plots(nproc, nparticles, stepsize, exchange, wasserstein)
 
 
 if __name__ == "__main__":
