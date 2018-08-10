@@ -1,95 +1,133 @@
+"""
+Run with `python -m torch.distributed.launch --nproc_per_node=2 experiments/dist.py`
+"""
 import os
+import shutil
 
-from scipy.io import loadmat
-import numpy as np
+import click
 import pandas as pd
-from matplotlib import pyplot as plt
-import seaborn as sns
-
-from sklearn.linear_model import LogisticRegression
+from scipy.io import loadmat
 
 import torch
+import torch.distributed as dist
 from torch.distributions.gamma import Gamma
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.normal import Normal
+from torch.multiprocessing import Process
 
-from definitions import DATA_DIR, FIGURES_DIR
+from definitions import DATA_DIR, RESULTS_DIR
 import dsvgd
 
-torch.manual_seed(42)
+from logreg_plots import make_plots
 
-# Load data
-dataset_name = 'banana'
+def run(rank, num_shards, nparticles, niter, stepsize, exchange, wasserstein):
+    torch.manual_seed(rank)
 
-mat = loadmat(os.path.join(DATA_DIR, 'benchmarks.mat'))
-dataset = mat[dataset_name][0, 0]
+    # Define model
+    # Load data
+    dataset_name = 'banana'
+    mat = loadmat(os.path.join(DATA_DIR, 'benchmarks.mat'))
+    dataset = mat[dataset_name][0, 0]
+    fold = 42 # use 42 train/test split
+
+    # split #, instance, features/label
+    x_train = torch.from_numpy(dataset[0][dataset[2] - 1][fold]).to(torch.float)
+    t_train = dataset[1][dataset[2] - 1][fold]
+
+    samples_per_shard = int(x_train.shape[0] / num_shards)
+
+    d = 3
+    alpha_prior = Gamma(1, 1)
+    w_prior = lambda alpha: MultivariateNormal(torch.zeros(x_train.shape[1]), torch.eye(x_train.shape[1]) / alpha)
+
+    def data_idx_range(rank):
+        "Returns the (start,end) indices of the range of data belonging to worker with rank `rank`"
+        return (samples_per_shard * rank, samples_per_shard * (rank+1))
+
+    def logp(shard, x):
+        # Get shard-local data
+        # NOTE: this will drop data if not divisible by num_shards
+        shard_start_idx, shard_end_idx = data_idx_range(shard)
+        x_train_local = x_train[shard_start_idx:shard_end_idx]
+        t_train_local = t_train[shard_start_idx:shard_end_idx]
+
+        alpha = torch.exp(x[0])
+        w = x[1:3].reshape((2,))
+        logp = alpha_prior.log_prob(alpha)
+        logp += w_prior(alpha).log_prob(w)
+        logp += -torch.log(1. + torch.exp(-1.*torch.matmul(t_train_local * x_train_local, w))).sum()
+        return logp
+
+    def kernel(x, y):
+        return torch.exp(-1.*torch.dist(x, y, p=2)**2)
+
+    # Initialize particles
+    q = Normal(0, 1)
+    make_sample = lambda: q.sample((d, 1))
+    particles = torch.cat([make_sample() for _ in range(nparticles)], dim=1).t()
+
+    dist_sampler = dsvgd.DistSampler(rank, num_shards, (lambda x: logp(rank, x)), kernel, particles,
+           exchange_particles=exchange in ['all_particles', 'all_scores'],
+           exchange_scores=exchange is 'all_scores',
+           include_wasserstein=wasserstein)
+
+    data = []
+    for l in range(niter):
+        if rank == 0:
+            print('Iteration {}'.format(l))
+
+        # save results right before updating particles
+        for i in range(len(dist_sampler.particles)):
+            data.append(pd.Series([l, torch.tensor(dist_sampler.particles[i]).numpy()], index=['timestep', 'value']))
+
+        dist_sampler.make_step(stepsize, h=10.0)
+
+    # save results after last update
+    for i in range(len(dist_sampler.particles)):
+        data.append(pd.Series([l+1, torch.tensor(dist_sampler.particles[i]).numpy()], index=['timestep', 'value']))
+
+    pd.DataFrame(data).to_pickle(os.path.join(RESULTS_DIR, 'shard-{}.pkl'.format(rank)))
+
+def init_distributed(rank, nparticles, niter, stepsize, exchange, wasserstein):
+    dist.init_process_group('tcp', rank=rank, init_method='env://')
+
+    rank = dist.get_rank()
+    num_shards = dist.get_world_size()
+    run(rank, num_shards, nparticles, niter, stepsize, exchange, wasserstein)
+
+@click.command()
+@click.option('--nproc', type=click.IntRange(0,32), default=1)
+@click.option('--nparticles', type=int, default=10)
+@click.option('--niter', type=int, default=100)
+@click.option('--stepsize', type=float, default=1e-3)
+@click.option('--exchange', type=click.Choice(['partitions', 'all_particles', 'all_scores']), default='partitions')
+@click.option('--wasserstein/--no-wasserstein', default=False)
+@click.option('--master_addr', default='127.0.0.1', type=str)
+@click.option('--master_port', default=29500, type=int)
+def cli(nproc, nparticles, niter, stepsize, exchange, wasserstein, master_addr, master_port):
+    # clean out any previous results files
+    if os.path.isdir(RESULTS_DIR):
+        shutil.rmtree(RESULTS_DIR)
+    os.mkdir(RESULTS_DIR)
+
+    if nproc == 1:
+        run(0, 1, nparticles, niter, stepsize, exchange, wasserstein)
+    else:
+        os.environ['MASTER_ADDR'] = master_addr
+        os.environ['MASTER_PORT'] = str(master_port)
+        os.environ['WORLD_SIZE'] = str(nproc)
+
+        processes = []
+        for rank in range(nproc):
+            p = Process(target=init_distributed, args=(rank, nparticles, niter, stepsize, exchange, wasserstein,))
+            p.start()
+            processes.append(p)
+
+        for p in processes:
+            p.join()
+
+    make_plots(nproc)
 
 
-fold = 42 # use 42 train/test split
-
-# split #, instance, features/label
-x_train = torch.from_numpy(dataset[0][dataset[2] - 1][fold]).to(torch.float)
-t_train = dataset[1][dataset[2] - 1][fold]
-x_test = dataset[0][dataset[3] - 1][fold]
-t_test = dataset[1][dataset[3] - 1][fold]
-
-# Define model
-d = 3
-
-alpha_prior = Gamma(1, 1)
-w_prior = lambda alpha: MultivariateNormal(torch.zeros(x_train.shape[1]), torch.eye(x_train.shape[1]) / alpha)
-
-def logp(x):
-    alpha = torch.exp(x[0])
-    w = x[1:3].reshape((2,))
-    logp = alpha_prior.log_prob(alpha)
-    logp += w_prior(alpha).log_prob(w)
-    logp += -torch.log(1. + torch.exp(-1.*torch.matmul(t_train * x_train, w))).sum()
-    return logp
-
-def kernel(x, y):
-    return torch.exp(-1.*torch.dist(x, y, p=2)**2)
-
-sampler = dsvgd.Sampler(d, logp, kernel)
-
-# Define sampling parameters
-n = 50
-num_iter = 500
-step_size = 3e-3
-
-# Run sampler
-df = sampler.sample(n, num_iter, step_size)
-
-# Post-process and plot
-sns.set()
-def test_acc(values):
-    alpha = np.exp(values[0])
-    w = values[1:]
-    accuracy = ((x_test.dot(w) > 0).reshape(-1) == (t_test > 0).reshape(-1)).mean()
-    return accuracy
-
-test_accs = (df
-    .groupby('timestep', as_index=False)
-    .apply(lambda x: pd.Series({
-        'timestep': x['timestep'].max(),
-        'mean_test_acc': x['value'].map(test_acc).mean(),
-        'max_test_acc': x['value'].map(test_acc).max()
-    }))
-    .melt(id_vars=['timestep']))
-
-baseline_test_acc = (LogisticRegression()
-        .fit(x_train, t_train.reshape(-1))
-        .score(x_test, t_test.reshape(-1)))
-
-g = sns.relplot(x='timestep', y='value', hue='variable', kind='line', data=test_accs)
-plt.axhline(baseline_test_acc, color='r')
-g.savefig(os.path.join(FIGURES_DIR, 'logreg-{}-test-acc.png'.format(dataset_name)))
-
-
-g = sns.FacetGrid(df[df['timestep'] % 20 == 0], col="timestep")
-def plot_kde(value, *args, **kwargs):
-    ps = np.stack(value.values)[:,1:]
-    ax = sns.kdeplot(ps[:,0],ps[:,1], *args, **kwargs)
-    return ax
-g.map(plot_kde, 'value')
-g.savefig(os.path.join(FIGURES_DIR, 'logreg-{}-kde.png'.format(dataset_name)))
+if __name__ == "__main__":
+    cli()

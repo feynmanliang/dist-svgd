@@ -65,8 +65,6 @@ def make_plots(world_size):
     g = sns.FacetGrid(df[df['timestep'] % 20 == 0], col="timestep")
     def plot_kde(value, *args, **kwargs):
         ps = np.stack(value.values)[:,1:]
-        print(ps[:,0])
-        print(ps[:,1])
         ax = sns.kdeplot(ps[:,0],ps[:,1], *args, **kwargs)
         return ax
     g.map(plot_kde, 'value')
