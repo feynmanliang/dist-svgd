@@ -49,6 +49,7 @@ def run():
 
     def logp(shard, x):
         # Get shard-local data
+        # NOTE: this will drop data if not divisible by num_shards
         shard_start_idx, shard_end_idx = data_idx_range(shard)
         x_train_local = x_train[shard_start_idx:shard_end_idx]
         t_train_local = t_train[shard_start_idx:shard_end_idx]
@@ -66,84 +67,46 @@ def run():
     rank = dist.get_rank()
 
     torch.manual_seed(rank)
-    dist_sampler = dsvgd.DistSampler(d, (lambda x: logp(rank, x)), kernel)
 
     # Define sampling parameters
     n = 50
     num_iter = 50
     step_size = 3e-3
 
-    particles_per_shard = int(n / num_shards)
-    def particle_idx_range(rank):
-        return (particles_per_shard * rank, particles_per_shard * (rank+1))
-
-    particle_start_idx, particle_end_idx = particle_idx_range(rank)
-
     # Run sampler
     q = Normal(0, 1)
     make_sample = lambda: q.sample((d, 1))
     particles = torch.cat([make_sample() for _ in range(n)], dim=1).t()
 
-    # particles currently "owned" by this shard
-    particle_start_idx, particle_end_idx = particle_idx_range(rank)
+    dist_sampler = dsvgd.DistSampler(rank, num_shards, d, (lambda x: logp(rank, x)), kernel, particles)
 
     data = []
     particles_to_send = None
     for l in range(num_iter):
-        print(particles.shape)
         if rank == 0:
             print('Iteration {}'.format(l))
 
         # save results right before updating particles
-        for i in range(particle_start_idx, particle_end_idx):
-            data.append(pd.Series([l, i, torch.tensor(particles[i]).numpy()], index=['timestep', 'particle', 'value']))
-
-        # only update "owned" particles
-        particles_to_update = particles[particle_start_idx:particle_end_idx,:]
+        for i in range(len(dist_sampler.particles)):
+            data.append(pd.Series([l, torch.tensor(dist_sampler.particles[i]).numpy()], index=['timestep', 'value']))
 
         # Interact only with particles assigned to this worker at this iteration
-        interacting_particles = particles_to_update
 
         # Interact with local copy of all particles
         # interacting_particles = particles
 
         # mutates in place
         dist_sampler.make_step(
-                particles_to_update,
                 step_size,
                 h=1.0,
-                interacting_particles=interacting_particles,
-                previous_particles=None)
+                include_wasserstein=True)
 
-        ##
-        ## round-robin exchange particles
-        ##
-        send_to_rank = (rank + 1) % num_shards
-        # only send "owned" particles
-        particles_to_send = torch.tensor(particles[particle_start_idx:particle_end_idx,:]).contiguous()
-        req = dist.isend(tensor=particles_to_send, dst=send_to_rank)
-
-        # receive new particles into indices owned by other shard
-        recv_from_rank = (rank - 1 + num_shards) % num_shards
-        particle_start_idx, particle_end_idx = particle_idx_range(recv_from_rank)
-        new_particles = torch.empty_like(particles[particle_start_idx:particle_end_idx,:])
-        req2 = dist.irecv(tensor=new_particles, src=recv_from_rank)
-
-        req.wait()
-        req2.wait()
-
-        particles[particle_start_idx:particle_end_idx,:] = new_particles
-
-        #
-        # exchange all particles
-        #
-        # tensor_list = [torch.empty(particles_per_shard, d) for _ in range(num_shards)]
-        # dist.all_gather(tensor_list, particles_to_update)
-        # particles = torch.cat(tensor_list)
+        # dist_sampler.exchange_round_robin()
+        dist_sampler.exchange_all()
 
     # save results after last update
-    for i in range(particle_start_idx, particle_end_idx):
-        data.append(pd.Series([l+1, i, torch.tensor(particles[i]).numpy()], index=['timestep', 'particle', 'value']))
+    for i in range(len(dist_sampler.particles)):
+        data.append(pd.Series([l+1, torch.tensor(dist_sampler.particles[i]).numpy()], index=['timestep', 'value']))
     pd.DataFrame(data).to_pickle(os.path.join(RESULTS_DIR, 'shard-{}.pkl'.format(rank)))
 
 def init_processes(fn, backend='tcp'):

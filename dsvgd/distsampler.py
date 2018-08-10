@@ -1,21 +1,50 @@
 import torch
+import torch.distributed as dist
 from torch.distributions.normal import Normal
 
 import numpy as np
 import scipy.optimize
 
 class DistSampler(object):
-    def __init__(self, d, logp, kernel):
+    def __init__(self, rank, num_shards, d, logp, kernel, particles):
         """Initializes a distributed SVGD sampler.
 
         Params:
+            rank - rank of shard
+            num_shards - total number of shards
             d - dimensionality of each particle (e.g. number of parameters in Bayesian inference)
             kernel - kernel function
             logp - log likelihood function
+            particles - array containing local state of all the particles
         """
+        self._rank = rank
+        self._num_shards = num_shards
         self._d = d
         self._logp = logp
         self._kernel = kernel
+        self._particles = particles
+        self._previous_particles = None
+
+        # NOTE: this will drop particles if not divisible by num_shards
+        self._particles_per_shard = int(self._particles.shape[0] / self._num_shards)
+        (start, end) = self._particle_idx_range(rank)
+        self._particle_start_idx = start
+        self._particle_end_idx = end
+
+    @property
+    def particles(self):
+        "Returns particles currently being updated on this sampler"
+        return self._particles[self._particle_start_idx:self._particle_end_idx,:]
+
+    @particles.setter
+    def particles(self, value):
+        "Sets value of particles currently being updated on this sampler"
+        assert value.shape == self.particles.shape
+        self._particles[self._particle_start_idx:self._particle_end_idx,:] = value
+
+    def _particle_idx_range(self, rank):
+        assert rank >= 0 and rank < self._num_shards
+        return (self._particles_per_shard * rank, self._particles_per_shard * (rank+1))
 
     def _dkernel(self, x, y):
         "Returns \nabla_x k(x,y)."
@@ -68,32 +97,56 @@ class DistSampler(object):
 
         return np.sum(np.expand_dims(transport_plan, axis=2) * diffs, axis=1)
 
-    def make_step(self, particles_to_update, step_size, h=1.0, interacting_particles=None, previous_particles=None):
+    def exchange_round_robin(self):
+        "Exchanges single particle partitions round robin."
+        send_to_rank = (self._rank + 1) % self._num_shards
+
+        particles_to_send = torch.tensor(self.particles).contiguous()
+        req = dist.isend(tensor=particles_to_send, dst=send_to_rank)
+
+        # receive new particles into indices owned by other shard
+        recv_from_rank = (self._rank - 1 + self._num_shards) % self._num_shards
+        start, end = self._particle_idx_range(recv_from_rank)
+
+        new_particles = torch.empty_like(self._particles[start:end,:])
+        req2 = dist.irecv(tensor=new_particles, src=recv_from_rank)
+
+        req.wait()
+        req2.wait()
+
+        self._particles[start:end,:] = new_particles
+        self._particle_start_idx = start
+        self._particle_end_idx = end
+
+    def exchange_all(self):
+        "Gathers all particles to all shards."
+        tensor_list = [torch.empty(self._particles_per_shard, self._d) for _ in range(self._num_shards)]
+        dist.all_gather(tensor_list, self.particles)
+        self._particles = torch.cat(tensor_list)
+
+
+    def make_step(self, step_size, h=1.0, include_wasserstein=False):
         """Performs one step of SVGD.
 
         Params:
-            particles_to_update - particles to update (mutated in-place)
             step_size - step size
             h - discretization size for JKO scheme
-            interacting_particles - particles to compute interactions with, should include `particles`
-            previous_particles - particles to compute wasserstein distance gradient against
+            include_wasserstein - whether to include a wasserstein term
 
         Returns:
             reference to `particles`
         """
-
-        if interacting_particles is None:
-            interacting_particles = particles_to_update
+        interacting_particles = self.particles
 
         wasserstein_grad = None
-        if previous_particles is not None:
-            wasserstein_grad = self._wasserstein_grad(particles_to_update, previous_particles)
-        for (i, particle) in enumerate(particles_to_update):
+        if include_wasserstein and self._previous_particles is not None:
+            wasserstein_grad = self._wasserstein_grad(self.particles, self._previous_particles)
+        for (i, particle) in enumerate(self.particles):
             delta = self._phi_hat(particle, interacting_particles)
 
             if wasserstein_grad is not None:
                 delta += h * torch.from_numpy(wasserstein_grad[i,:]).float()
 
-            particles_to_update[i] = particle + step_size * delta
+            self.particles[i] += step_size * delta
 
-        return particles_to_update
+        self._previous_particles = torch.tensor(self.particles)
