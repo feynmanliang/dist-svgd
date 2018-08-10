@@ -44,8 +44,6 @@ class DistSampler(object):
         self._particle_end_idx = end
 
         self._previous_particles = None
-        if include_wasserstein:
-            self._previous_particles = torch.empty(self.particles.shape)
 
     @property
     def particles(self):
@@ -98,7 +96,7 @@ class DistSampler(object):
         """Computes the gradient of the W2 distance.
 
         TODO: extend to when particles are not equal"""
-        # solve the wasserstein LP (should be a matching)
+        # solve the LP for discrete Wasserstein distance (should be a matching)
         m = particles.shape[0]
         n = previous_particles.shape[0]
         d = particles[0].shape[0]
@@ -108,17 +106,17 @@ class DistSampler(object):
                 diffs[i][j] = particles[i] - previous_particles[j]
         c = np.apply_along_axis(lambda x: np.linalg.norm(x, ord=2)**2, 2, diffs).flatten(order='C')
         A_eq = np.zeros((m+n, m*n))
-        for i in range(n):
-            A_eq[i,m*i:m*(i+1)] = 1
-        for j in range(m):
-            for k in range(n):
-                A_eq[n+j, j + k*m] = 1
+        for i in range(m):
+            A_eq[i,n*i:n*(i+1)] = 1
+        for j in range(n):
+            for k in range(m):
+                A_eq[m+j, j + k*n] = 1
         b_eq = np.hstack([
             [ 1. / m for _ in range(m) ],
             [ 1. / n for _ in range(n) ]
         ]).squeeze()
 
-        transport_plan = scipy.optimize.linprog(c, A_eq=A_eq, b_eq=b_eq).x.reshape(n, m)
+        transport_plan = scipy.optimize.linprog(c, A_eq=A_eq, b_eq=b_eq).x.reshape(m, n)
 
         return np.sum(np.expand_dims(transport_plan, axis=2) * diffs, axis=1)
 
@@ -188,4 +186,7 @@ class DistSampler(object):
 
             self.particles[i] += step_size * delta
 
-        self._previous_particles = torch.tensor(self.particles)
+        if self._exchange_particles:
+            self._previous_particles = torch.tensor(self._particles)
+        else:
+            self._previous_particles = torch.tensor(self.particles)

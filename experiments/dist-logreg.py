@@ -75,7 +75,9 @@ def run():
     particles = torch.cat([make_sample() for _ in range(n)], dim=1).t()
 
     dist_sampler = dsvgd.DistSampler(rank, num_shards, (lambda x: logp(rank, x)), kernel, particles,
-           exchange_particles=True, exchange_scores=True, include_wasserstein=False)
+           exchange_particles=False,
+           exchange_scores=False,
+           include_wasserstein=False)
 
     data = []
     for l in range(num_iter):
@@ -86,9 +88,7 @@ def run():
         for i in range(len(dist_sampler.particles)):
             data.append(pd.Series([l, torch.tensor(dist_sampler.particles[i]).numpy()], index=['timestep', 'value']))
 
-        dist_sampler.make_step(
-                step_size,
-                h=1.0)
+        dist_sampler.make_step(step_size, h=10.0)
 
     # save results after last update
     for i in range(len(dist_sampler.particles)):
