@@ -1,5 +1,5 @@
 """
-Run with `python -m torch.distributed.launch --nproc_per_node=2 experiments/dist.py`
+Plots results.
 """
 import os
 from glob import glob
@@ -14,12 +14,9 @@ from sklearn.linear_model import LogisticRegression
 import seaborn as sns
 import torch
 
-
 from definitions import RESULTS_DIR, DATA_DIR, FIGURES_DIR
 import dsvgd
 
-@click.command()
-@click.argument('world_size')
 def make_plots(world_size):
     # Load data
     dataset_name = 'banana'
@@ -68,10 +65,9 @@ def make_plots(world_size):
     g = sns.FacetGrid(df[df['timestep'] % 20 == 0], col="timestep")
     def plot_kde(value, *args, **kwargs):
         ps = np.stack(value.values)[:,1:]
+        print(ps[:,0])
+        print(ps[:,1])
         ax = sns.kdeplot(ps[:,0],ps[:,1], *args, **kwargs)
         return ax
     g.map(plot_kde, 'value')
     g.savefig(os.path.join(FIGURES_DIR, 'logreg-dist-{}-{}-kde.png'.format(world_size, dataset_name)))
-
-if __name__ == '__main__':
-    make_plots()
