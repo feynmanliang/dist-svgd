@@ -3,20 +3,24 @@ Run with `python -m torch.distributed.launch --nproc_per_node=2 experiments/dist
 """
 import os
 
-from scipy.io import loadmat
+import click
 import pandas as pd
+from scipy.io import loadmat
 
 import torch
 import torch.distributed as dist
 from torch.distributions.gamma import Gamma
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.normal import Normal
+from torch.multiprocessing import Process
 
-from definitions import DATA_DIR, FIGURES_DIR, RESULTS_DIR
+from definitions import DATA_DIR, RESULTS_DIR
 import dsvgd
 
 
-def run():
+def run(rank, num_shards, exchange, wasserstein):
+    torch.manual_seed(rank)
+
     # Load data
     dataset_name = 'banana'
 
@@ -31,7 +35,6 @@ def run():
     x_test = dataset[0][dataset[3] - 1][fold]
     t_test = dataset[1][dataset[3] - 1][fold]
 
-    num_shards = dist.get_world_size()
     samples_per_shard = int(x_train.shape[0] / num_shards)
 
     # Define model
@@ -61,12 +64,9 @@ def run():
     def kernel(x, y):
         return torch.exp(-1.*torch.dist(x, y, p=2)**2)
 
-    rank = dist.get_rank()
-    torch.manual_seed(rank)
-
     # Define sampling parameters
     n = 50
-    num_iter = 50
+    num_iter = 500
     step_size = 3e-3
 
     # Run sampler
@@ -75,9 +75,9 @@ def run():
     particles = torch.cat([make_sample() for _ in range(n)], dim=1).t()
 
     dist_sampler = dsvgd.DistSampler(rank, num_shards, (lambda x: logp(rank, x)), kernel, particles,
-           exchange_particles=False,
-           exchange_scores=False,
-           include_wasserstein=False)
+           exchange_particles=exchange in ['all_particles', 'all_scores'],
+           exchange_scores=exchange is 'all_scores',
+           include_wasserstein=wasserstein)
 
     data = []
     for l in range(num_iter):
@@ -96,11 +96,36 @@ def run():
 
     pd.DataFrame(data).to_pickle(os.path.join(RESULTS_DIR, 'shard-{}.pkl'.format(rank)))
 
-def init_processes(fn, backend='tcp'):
-    os.environ['MASTER_ADDR'] = '127.0.0.1'
-    os.environ['MASTER_PORT'] = '29500'
-    dist.init_process_group(backend)
-    fn()
+def init_distributed(rank, exchange, wasserstein):
+    dist.init_process_group('tcp', rank=rank, init_method='env://')
+
+    rank = dist.get_rank()
+    num_shards = dist.get_world_size()
+    run(rank, num_shards, exchange, wasserstein)
+
+@click.command()
+@click.option('--nproc', type=click.IntRange(0,32), default=1)
+@click.option('--exchange', type=click.Choice(['partitions', 'all_particles', 'all_scores']), default='partitions')
+@click.option('--wasserstein/--no-wasserstein', default=False)
+@click.option('--master_addr', default='127.0.0.1', type=str)
+@click.option('--master_port', default=29500, type=int)
+def cli(nproc, exchange, wasserstein, master_addr, master_port):
+    if nproc == 1:
+        run(0, 1, exchange, wasserstein)
+    else:
+        os.environ['MASTER_ADDR'] = master_addr
+        os.environ['MASTER_PORT'] = str(master_port)
+        os.environ['WORLD_SIZE'] = str(nproc)
+
+        processes = []
+        for rank in range(nproc):
+            p = Process(target=init_distributed, args=(rank, exchange, wasserstein,))
+            p.start()
+            processes.append(p)
+
+        for p in processes:
+            p.join()
+
 
 if __name__ == "__main__":
-    init_processes(run)
+    cli()

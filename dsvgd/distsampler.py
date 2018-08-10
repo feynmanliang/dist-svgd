@@ -167,12 +167,13 @@ class DistSampler(object):
         Returns:
             reference to `particles`
         """
-        if self._exchange_particles:
-            self._exchange_all_particles()
-            if self._exchange_scores:
-                self._exchange_all_scores()
-        else:
-            self._exchange_round_robin()
+        if self._num_shards > 1:
+            if self._exchange_particles:
+                self._exchange_all_particles()
+                if self._exchange_scores:
+                    self._exchange_all_scores()
+            else:
+                self._exchange_round_robin()
 
         wasserstein_grad = None
         if self._include_wasserstein and self._previous_particles is not None:
