@@ -11,7 +11,6 @@ import torch.distributed as dist
 from torch.distributions.gamma import Gamma
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.normal import Normal
-from torch.multiprocessing import Process
 
 from definitions import DATA_DIR, FIGURES_DIR, RESULTS_DIR
 import dsvgd
@@ -23,7 +22,6 @@ def run():
 
     mat = loadmat(os.path.join(DATA_DIR, 'benchmarks.mat'))
     dataset = mat[dataset_name][0, 0]
-
 
     fold = 42 # use 42 train/test split
 
@@ -38,7 +36,6 @@ def run():
 
     # Define model
     d = 3
-
     alpha_prior = Gamma(1, 1)
     w_prior = lambda alpha: MultivariateNormal(torch.zeros(x_train.shape[1]), torch.eye(x_train.shape[1]) / alpha)
 
@@ -65,7 +62,6 @@ def run():
         return torch.exp(-1.*torch.dist(x, y, p=2)**2)
 
     rank = dist.get_rank()
-
     torch.manual_seed(rank)
 
     # Define sampling parameters
@@ -78,10 +74,10 @@ def run():
     make_sample = lambda: q.sample((d, 1))
     particles = torch.cat([make_sample() for _ in range(n)], dim=1).t()
 
-    dist_sampler = dsvgd.DistSampler(rank, num_shards, d, (lambda x: logp(rank, x)), kernel, particles)
+    dist_sampler = dsvgd.DistSampler(rank, num_shards, (lambda x: logp(rank, x)), kernel, particles,
+           exchange_particles=True, exchange_scores=True, include_wasserstein=False)
 
     data = []
-    particles_to_send = None
     for l in range(num_iter):
         if rank == 0:
             print('Iteration {}'.format(l))
@@ -90,23 +86,14 @@ def run():
         for i in range(len(dist_sampler.particles)):
             data.append(pd.Series([l, torch.tensor(dist_sampler.particles[i]).numpy()], index=['timestep', 'value']))
 
-        # Interact only with particles assigned to this worker at this iteration
-
-        # Interact with local copy of all particles
-        # interacting_particles = particles
-
-        # mutates in place
         dist_sampler.make_step(
                 step_size,
-                h=1.0,
-                include_wasserstein=True)
-
-        # dist_sampler.exchange_round_robin()
-        dist_sampler.exchange_all()
+                h=1.0)
 
     # save results after last update
     for i in range(len(dist_sampler.particles)):
         data.append(pd.Series([l+1, torch.tensor(dist_sampler.particles[i]).numpy()], index=['timestep', 'value']))
+
     pd.DataFrame(data).to_pickle(os.path.join(RESULTS_DIR, 'shard-{}.pkl'.format(rank)))
 
 def init_processes(fn, backend='tcp'):

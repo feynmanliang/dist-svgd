@@ -6,30 +6,46 @@ import numpy as np
 import scipy.optimize
 
 class DistSampler(object):
-    def __init__(self, rank, num_shards, d, logp, kernel, particles):
+    def __init__(self, rank, num_shards, logp, kernel, particles,
+            exchange_particles=True, exchange_scores=True, include_wasserstein=True):
         """Initializes a distributed SVGD sampler.
 
         Params:
             rank - rank of shard
             num_shards - total number of shards
-            d - dimensionality of each particle (e.g. number of parameters in Bayesian inference)
             kernel - kernel function
             logp - log likelihood function
-            particles - array containing local state of all the particles
+            particles - (num_particles, d) array of all the initial particles
+            exchange_particles - whether to globally exchange particles per iteration
+            exchange_scores - whether to globally exchange score functions
+            include_wasserstein - whether to include a wasserstein term
         """
+        assert not (exchange_scores and not exchange_particles), "must exchange particles to also exchange scores"
         self._rank = rank
         self._num_shards = num_shards
-        self._d = d
         self._logp = logp
         self._kernel = kernel
+        self._d = particles.shape[1]
         self._particles = particles
-        self._previous_particles = None
+        self._exchange_particles = exchange_particles
+        self._exchange_scores = exchange_scores
+        self._include_wasserstein = include_wasserstein
+
+        self._scores = None
+        if exchange_scores:
+            self._scores = torch.empty(particles.shape)
 
         # NOTE: this will drop particles if not divisible by num_shards
-        self._particles_per_shard = int(self._particles.shape[0] / self._num_shards)
+        self._particles_per_shard = int(particles.shape[0] / self._num_shards)
+        self._num_particles = self._particles_per_shard * self._num_shards
+
         (start, end) = self._particle_idx_range(rank)
         self._particle_start_idx = start
         self._particle_end_idx = end
+
+        self._previous_particles = None
+        if include_wasserstein:
+            self._previous_particles = torch.empty(self.particles.shape)
 
     @property
     def particles(self):
@@ -56,18 +72,27 @@ class DistSampler(object):
         return _x.grad
 
     def _dlogp(self, x):
-        "Returns \nabla_x log p(x)"
+        "Returns \nabla_x log p(x) for particle `x` on data partition owned by this shard"
         _x = x.detach()
         _x.requires_grad_(True)
         self._logp(_x).backward()
         return _x.grad
 
-    def _phi_hat(self, particle, particles):
+    def _phi_hat(self, particle):
+        interacting_particles = self.particles
+        if self._exchange_particles:
+            interacting_particles = self._particles
+
         total = torch.zeros(particle.size())
-        for other_particle in particles:
-            total += (self._kernel(other_particle, particle) * self._dlogp(other_particle)
-                    + self._dkernel(other_particle, particle))
-        return (1.0 / particles.shape[0]) * total
+        for (i, other_particle) in enumerate(interacting_particles):
+            total += self._dkernel(other_particle, particle)
+
+            if self._exchange_scores:
+                total += self._kernel(other_particle, particle) * self._scores[i,:]
+            else:
+                total += self._kernel(other_particle, particle) * self._dlogp(other_particle)
+
+        return (1.0 / interacting_particles.shape[0]) * total
 
     def _wasserstein_grad(self, particles, previous_particles):
         """Computes the gradient of the W2 distance.
@@ -97,7 +122,7 @@ class DistSampler(object):
 
         return np.sum(np.expand_dims(transport_plan, axis=2) * diffs, axis=1)
 
-    def exchange_round_robin(self):
+    def _exchange_round_robin(self):
         "Exchanges single particle partitions round robin."
         send_to_rank = (self._rank + 1) % self._num_shards
 
@@ -118,31 +143,45 @@ class DistSampler(object):
         self._particle_start_idx = start
         self._particle_end_idx = end
 
-    def exchange_all(self):
+    def _exchange_all_particles(self):
         "Gathers all particles to all shards."
         tensor_list = [torch.empty(self._particles_per_shard, self._d) for _ in range(self._num_shards)]
         dist.all_gather(tensor_list, self.particles)
         self._particles = torch.cat(tensor_list)
 
+    def _exchange_all_scores(self):
+        """Exchange score function values.
 
-    def make_step(self, step_size, h=1.0, include_wasserstein=False):
+        This function expects particles to have already been exchanged, so `self._particles`
+        contain the globally consistent particle values.
+        """
+        for (i, particle) in enumerate(self._particles):
+            self._scores[i,:] = self._dlogp(particle)
+        dist.all_reduce(self._scores, op=dist.reduce_op.SUM)
+
+    def make_step(self, step_size, h=1.0):
         """Performs one step of SVGD.
 
         Params:
             step_size - step size
             h - discretization size for JKO scheme
-            include_wasserstein - whether to include a wasserstein term
 
         Returns:
             reference to `particles`
         """
-        interacting_particles = self.particles
+        if self._exchange_particles:
+            self._exchange_all_particles()
+            if self._exchange_scores:
+                self._exchange_all_scores()
+        else:
+            self._exchange_round_robin()
 
         wasserstein_grad = None
-        if include_wasserstein and self._previous_particles is not None:
+        if self._include_wasserstein and self._previous_particles is not None:
             wasserstein_grad = self._wasserstein_grad(self.particles, self._previous_particles)
+
         for (i, particle) in enumerate(self.particles):
-            delta = self._phi_hat(particle, interacting_particles)
+            delta = self._phi_hat(particle)
 
             if wasserstein_grad is not None:
                 delta += h * torch.from_numpy(wasserstein_grad[i,:]).float()
