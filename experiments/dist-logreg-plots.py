@@ -9,6 +9,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import pandas as pd
 from scipy.io import loadmat
+import scipy.special
 from sklearn.linear_model import LogisticRegression
 import seaborn as sns
 import torch
@@ -40,17 +41,18 @@ def make_plots(world_size):
     # Post-process and plot
     sns.set()
     def test_acc(values):
-        alpha = np.exp(values[0])
-        w = values[1:]
-        accuracy = ((x_test.dot(w) > 0).reshape(-1) == (t_test > 0).reshape(-1)).mean()
+        def prob(value):
+            alpha = np.exp(value[0])
+            w = value[1:]
+            return scipy.special.expit(x_test.dot(w))
+        accuracy = ((values.map(prob).mean() > 0.5).reshape(-1) == (t_test > 0).reshape(-1)).mean()
         return accuracy
 
     test_accs = (df
         .groupby('timestep', as_index=False)
         .apply(lambda x: pd.Series({
             'timestep': x['timestep'].max(),
-            'mean_test_acc': x['value'].map(test_acc).mean(),
-            'max_test_acc': x['value'].map(test_acc).max()
+            'test_acc': test_acc(x['value']),
         }))
         .melt(id_vars=['timestep']))
 
