@@ -34,6 +34,8 @@ def make_plots(nproc, nparticles, stepsize, exchange, wasserstein):
     df = pd.concat(map(pd.read_pickle, glob(os.path.join(RESULTS_DIR, 'shard-*.pkl'))))
 
     def save_fig(g, figname):
+        g.fig.suptitle("nshards={}, nparticles={}, exchange={}, wasserstein={}, stepsize={:.0e}".format(
+            nproc, nparticles, exchange, wasserstein, stepsize))
         g.savefig(os.path.join(
             FIGURES_DIR,
             'logreg-{}-{}-nproc={}-nparticles={}-stepsize={}-exchange={}-wasserstein={}.png'.format(
