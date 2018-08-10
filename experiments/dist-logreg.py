@@ -73,8 +73,8 @@ def run():
     num_iter = 50
     step_size = 3e-3
 
+    particles_per_shard = int(n / num_shards)
     def particle_idx_range(rank):
-        particles_per_shard = int(n / num_shards)
         return (particles_per_shard * rank, particles_per_shard * (rank+1))
 
     particle_start_idx, particle_end_idx = particle_idx_range(rank)
@@ -90,6 +90,7 @@ def run():
     data = []
     particles_to_send = None
     for l in range(num_iter):
+        print(particles.shape)
         if rank == 0:
             print('Iteration {}'.format(l))
 
@@ -114,8 +115,9 @@ def run():
                 interacting_particles=interacting_particles,
                 previous_particles=None)
 
-
-        # round-robin exchange particles
+        ##
+        ## round-robin exchange particles
+        ##
         send_to_rank = (rank + 1) % num_shards
         # only send "owned" particles
         particles_to_send = torch.tensor(particles[particle_start_idx:particle_end_idx,:]).contiguous()
@@ -131,6 +133,13 @@ def run():
         req2.wait()
 
         particles[particle_start_idx:particle_end_idx,:] = new_particles
+
+        #
+        # exchange all particles
+        #
+        # tensor_list = [torch.empty(particles_per_shard, d) for _ in range(num_shards)]
+        # dist.all_gather(tensor_list, particles_to_update)
+        # particles = torch.cat(tensor_list)
 
     # save results after last update
     for i in range(particle_start_idx, particle_end_idx):
