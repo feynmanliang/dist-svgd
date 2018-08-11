@@ -6,18 +6,23 @@ from glob import glob
 
 import click
 import numpy as np
-from matplotlib import pyplot as plt
 import pandas as pd
 from scipy.io import loadmat
 import scipy.special
 from sklearn.linear_model import LogisticRegression
-import seaborn as sns
 import torch
+import visdom
 
-from definitions import RESULTS_DIR, DATA_DIR, FIGURES_DIR
+from definitions import RESULTS_DIR, DATA_DIR
 import dsvgd
 
-def make_plots(nproc, nparticles, stepsize, exchange, wasserstein):
+@click.command()
+@click.option('--nproc', type=click.IntRange(0,32), default=1)
+@click.option('--nparticles', type=int, default=10)
+@click.option('--stepsize', type=float, default=1e-3)
+@click.option('--exchange', type=click.Choice(['partitions', 'all_particles', 'all_scores']), default='partitions')
+@click.option('--wasserstein/--no-wasserstein', default=False)
+def make_plots(nproc, nparticles, stepsize, exchange, wasserstein, **kwargs):
     # Load data
     dataset_name = 'banana'
     mat = loadmat(os.path.join(DATA_DIR, 'benchmarks.mat'))
@@ -32,27 +37,11 @@ def make_plots(nproc, nparticles, stepsize, exchange, wasserstein):
 
     # load run results
     df = pd.concat(map(pd.read_pickle, glob(os.path.join(RESULTS_DIR, 'shard-*.pkl'))))
-    import visdom
-    vis = visdom.Visdom()
-
-    def save_fig(g, figname):
-        g.fig.suptitle("nshards={}, nparticles={}, exchange={}, wasserstein={}, stepsize={:.0e}".format(
-            nproc, nparticles, exchange, wasserstein, stepsize))
-        vis.matplot(g)
-        # g.savefig(os.path.join(
-        #     FIGURES_DIR,
-        #     'logreg-{}-{}-nproc={}-nparticles={}-stepsize={}-exchange={}-wasserstein={}.png'.format(
-        #         dataset_name,
-        #         figname,
-        #         nproc,
-        #         nparticles,
-        #         stepsize,
-        #         exchange,
-        #         wasserstein)))
 
     # Post-process and plot
-    sns.set()
+    vis = visdom.Visdom()
 
+    # Baseline test accuracy
     baseline_test_acc = (LogisticRegression()
             .fit(x_train, t_train.reshape(-1))
             .score(x_test, t_test.reshape(-1)))
@@ -71,16 +60,32 @@ def make_plots(nproc, nparticles, stepsize, exchange, wasserstein):
             'timestep': x['timestep'].max(),
             'dsvgd': test_acc(x['value']),
             'sklearn logreg': baseline_test_acc,
-        }))
-        .melt(id_vars=['timestep'], value_name='test acc'))
+        })))
+    vis.line(
+            Y=test_accs.drop('timestep', axis=1).values,
+            X=test_accs['timestep'].values,
+            opts=dict(
+                xlabel='Iteration',
+                ylabel='Test accuracy',
+                title='logreg {} {} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
+                    dataset_name, 'test_acc', nproc, nparticles, exchange, wasserstein, stepsize),
+                legend=test_accs.drop('timestep', axis=1).columns.values.tolist(),
+                ))
 
-    g = sns.relplot(x='timestep', y='test acc', hue='variable', kind='line', data=test_accs)
-    save_fig(g, 'testacc')
+    # Particle positions
+    for t in range(0, df['timestep'].max(), 10):
+        vis.scatter(
+                X=np.stack(df[df['timestep'] == t]['value'].values)[:,1:],
+                opts=dict(
+                    xlabel='w1',
+                    xtickmin='-1.5',
+                    xtickmax='1.5',
+                    ylabel='w2',
+                    ytickmin='-3',
+                    ytickmax='2',
+                    title='logreg {} {} t={} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
+                        dataset_name, 'particles', t, nproc, nparticles, exchange, wasserstein, stepsize),
+                    ))
 
-    g = sns.FacetGrid(df[df['timestep'] % 20 == 0], col="timestep")
-    def plot_kde(value, *args, **kwargs):
-        ps = np.stack(value.values)[:,1:]
-        ax = sns.kdeplot(ps[:,0],ps[:,1], *args, **kwargs)
-        return ax
-    g.map(plot_kde, 'value')
-    save_fig(g, 'kde')
+if __name__ == '__main__':
+    make_plots()

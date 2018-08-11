@@ -111,7 +111,8 @@ def init_distributed(rank, nparticles, niter, stepsize, exchange, wasserstein):
 @click.option('--wasserstein/--no-wasserstein', default=False)
 @click.option('--master_addr', default='127.0.0.1', type=str)
 @click.option('--master_port', default=29500, type=int)
-def cli(nproc, nparticles, niter, stepsize, exchange, wasserstein, master_addr, master_port):
+@click.pass_context
+def cli(ctx, nproc, nparticles, niter, stepsize, exchange, wasserstein, master_addr, master_port):
     # clean out any previous results files
     if os.path.isdir(RESULTS_DIR):
         shutil.rmtree(RESULTS_DIR)
@@ -133,7 +134,7 @@ def cli(nproc, nparticles, niter, stepsize, exchange, wasserstein, master_addr, 
         for p in processes:
             p.join()
 
-    make_plots(nproc, nparticles, stepsize, exchange, wasserstein)
+    ctx.forward(make_plots)
 
 
 if __name__ == "__main__":
