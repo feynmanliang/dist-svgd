@@ -101,7 +101,7 @@ def plot_alpha_hist(df, vis, plot_title, timestep_between):
 @click.option('--stepsize', type=float, default=1e-3)
 @click.option('--exchange', type=click.Choice(['partitions', 'all_particles', 'all_scores']), default='partitions')
 @click.option('--wasserstein/--no-wasserstein', default=False)
-def make_plots(dataset, nproc, nparticles, stepsize, exchange, wasserstein, **kwargs):
+def make_plots(dataset, fold, nproc, nparticles, stepsize, exchange, wasserstein, **kwargs):
     # load run results
     results_dir = get_results_dir(dataset, fold, nproc, nparticles, stepsize, exchange, wasserstein)
     df = pd.concat(map(pd.read_pickle, glob(os.path.join(results_dir, 'shard-*.pkl'))))
@@ -109,8 +109,8 @@ def make_plots(dataset, nproc, nparticles, stepsize, exchange, wasserstein, **kw
     # Post-process and plot
     vis = visdom.Visdom()
 
-    plot_title = 'logreg_{} {} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
-                    dataset, 'test_acc', nproc, nparticles, exchange, wasserstein, stepsize)
+    plot_title = 'logreg_{}_{} {} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
+                    dataset, fold, 'test_acc', nproc, nparticles, exchange, wasserstein, stepsize)
     plot_test_acc(df, vis, plot_title, dataset, fold)
 
     if 'dataset' == 'banana':
