@@ -16,15 +16,8 @@ import visdom
 from definitions import RESULTS_DIR, DATA_DIR
 import dsvgd
 
-@click.command()
-@click.option('--nproc', type=click.IntRange(0,32), default=1)
-@click.option('--nparticles', type=int, default=10)
-@click.option('--stepsize', type=float, default=1e-3)
-@click.option('--exchange', type=click.Choice(['partitions', 'all_particles', 'all_scores']), default='partitions')
-@click.option('--wasserstein/--no-wasserstein', default=False)
-def make_plots(nproc, nparticles, stepsize, exchange, wasserstein, **kwargs):
+def plot_test_acc(df, vis, plot_title, dataset_name):
     # Load data
-    dataset_name = 'banana'
     mat = loadmat(os.path.join(DATA_DIR, 'benchmarks.mat'))
     dataset = mat[dataset_name][0, 0]
     fold = 42 # use 42 train/test split
@@ -35,57 +28,89 @@ def make_plots(nproc, nparticles, stepsize, exchange, wasserstein, **kwargs):
     x_test = dataset[0][dataset[3] - 1][fold]
     t_test = dataset[1][dataset[3] - 1][fold]
 
-    # load run results
-    df = pd.concat(map(pd.read_pickle, glob(os.path.join(RESULTS_DIR, 'shard-*.pkl'))))
-
-    # Post-process and plot
-    vis = visdom.Visdom()
-
-    # Baseline test accuracy
+    # Baseline test accuracy using sklearn
     baseline_test_acc = (LogisticRegression()
             .fit(x_train, t_train.reshape(-1))
             .score(x_test, t_test.reshape(-1)))
 
-    def test_acc(values):
-        def prob(value):
-            alpha = np.exp(value[0])
-            w = value[1:]
+    # Ensemble test average
+    def _test_acc(particles):
+        "Computes test accuracy of posterior predictive mean over particles."
+        def prob(particle):
+            # Decode particle parameters
+            alpha = np.exp(particle[0])
+            w = particle[1:]
             return scipy.special.expit(x_test.dot(w))
-        accuracy = ((values.map(prob).mean() > 0.5).reshape(-1) == (t_test > 0).reshape(-1)).mean()
+        accuracy = ((particles.map(prob).mean() > 0.5).reshape(-1) == (t_test > 0).reshape(-1)).mean()
         return accuracy
-
     test_accs = (df
         .groupby('timestep', as_index=False)
         .apply(lambda x: pd.Series({
             'timestep': x['timestep'].max(),
-            'dsvgd': test_acc(x['value']),
+            'dsvgd': _test_acc(x['value']),
             'sklearn logreg': baseline_test_acc,
         })))
+
     vis.line(
             Y=test_accs.drop('timestep', axis=1).values,
             X=test_accs['timestep'].values,
             opts=dict(
                 xlabel='Iteration',
                 ylabel='Test accuracy',
-                title='logreg {} {} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
-                    dataset_name, 'test_acc', nproc, nparticles, exchange, wasserstein, stepsize),
+                title=plot_title,
                 legend=test_accs.drop('timestep', axis=1).columns.values.tolist(),
                 ))
-
+def plot_w_scatters(df, vis, plot_title, timestep_between):
     # Particle positions
-    for t in range(0, df['timestep'].max(), 10):
+    for t in range(0, df['timestep'].max(), timestep_between):
         vis.scatter(
                 X=np.stack(df[df['timestep'] == t]['value'].values)[:,1:],
                 opts=dict(
                     xlabel='w1',
-                    xtickmin='-1.5',
-                    xtickmax='1.5',
+                    xtickmin=-1.5,
+                    xtickmax=1.5,
                     ylabel='w2',
-                    ytickmin='-3',
-                    ytickmax='2',
-                    title='logreg {} {} t={} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
-                        dataset_name, 'particles', t, nproc, nparticles, exchange, wasserstein, stepsize),
+                    ytickmin=-3,
+                    ytickmax=2,
+                    title=plot_title(t),
                     ))
+def plot_alpha_hist(df, vis, plot_title, timestep_between):
+    for t in range(0, df['timestep'].max(), timestep_between):
+        vis.histogram(
+                X=np.stack(df[df['timestep'] == t]['value'].values)[:,0],
+                opts=dict(
+                    xlabel='alpha',
+                    xtickmin=-2,
+                    xtickmax=2,
+                    title=plot_title(t),
+                    ))
+
+@click.command()
+@click.option('--nproc', type=click.IntRange(0,32), default=1)
+@click.option('--nparticles', type=int, default=10)
+@click.option('--stepsize', type=float, default=1e-3)
+@click.option('--exchange', type=click.Choice(['partitions', 'all_particles', 'all_scores']), default='partitions')
+@click.option('--wasserstein/--no-wasserstein', default=False)
+def make_plots(nproc, nparticles, stepsize, exchange, wasserstein, **kwargs):
+    # load run results
+    dataset_name = 'banana'
+    df = pd.concat(map(pd.read_pickle, glob(os.path.join(RESULTS_DIR, 'shard-*.pkl'))))
+
+    # Post-process and plot
+    vis = visdom.Visdom()
+
+    plot_title = 'logreg {} {} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
+                    dataset_name, 'test_acc', nproc, nparticles, exchange, wasserstein, stepsize)
+    plot_test_acc(df, vis, plot_title, dataset_name)
+
+    TIMESTEPS_BETWEEN_KDE_PLOTS = 10
+    plot_title = lambda t: 'logreg {} {} t={} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
+                    dataset_name, t, 'particles_w1_w2', t, nproc, nparticles, exchange, wasserstein, stepsize)
+    plot_w_scatters(df, vis, plot_title, TIMESTEPS_BETWEEN_KDE_PLOTS)
+
+    plot_title = lambda t: 'logreg {} {} t={} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
+                    dataset_name, t, 'particles_alpha', t, nproc, nparticles, exchange, wasserstein, stepsize)
+    plot_alpha_hist(df, vis, plot_title, TIMESTEPS_BETWEEN_KDE_PLOTS)
 
 if __name__ == '__main__':
     make_plots()
