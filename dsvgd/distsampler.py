@@ -42,7 +42,7 @@ class DistSampler(object):
         # NOTE: this will drop particles if not divisible by num_shards
         self._particles_per_shard = int(particles.shape[0] / self._num_shards)
         self._num_particles = self._particles_per_shard * self._num_shards
-        self._particles = particles[:self._particles_per_shard*self._num_particles]
+        self._particles = particles[:self._particles_per_shard*self._num_shards]
 
         (start, end) = self._particle_idx_range(rank)
         self._particle_start_idx = start
