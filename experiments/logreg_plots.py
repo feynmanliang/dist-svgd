@@ -16,17 +16,16 @@ import visdom
 from definitions import RESULTS_DIR, DATA_DIR
 import dsvgd
 
-def get_results_dir(dataset_name, nproc, nparticles, stepsize, exchange, wasserstein):
-    subdir = 'logreg_{}-nshards={}-nparticles={}-exchange={}-wasserstein={}-stepsize={:.0e}'.format(
-            dataset_name, nproc, nparticles, exchange, wasserstein, stepsize)
+def get_results_dir(dataset_name, fold, nproc, nparticles, stepsize, exchange, wasserstein):
+    subdir = 'logreg_{}_{}-nshards={}-nparticles={}-exchange={}-wasserstein={}-stepsize={:.0e}'.format(
+            dataset_name, fold, nproc, nparticles, exchange, wasserstein, stepsize)
     return os.path.join(RESULTS_DIR, subdir)
 
 
-def plot_test_acc(df, vis, plot_title, dataset_name):
+def plot_test_acc(df, vis, plot_title, dataset_name, fold):
     # Load data
     mat = loadmat(os.path.join(DATA_DIR, 'benchmarks.mat'))
     dataset = mat[dataset_name][0, 0]
-    fold = 42 # use 42 train/test split
 
     # split #, instance, features/label
     x_train = torch.from_numpy(dataset[0][dataset[2] - 1][fold]).to(torch.float)
@@ -96,6 +95,7 @@ def plot_alpha_hist(df, vis, plot_title, timestep_between):
 @click.command()
 @click.option('--dataset', type=click.Choice([
     'banana', 'diabetis', 'german', 'image', 'splice', 'titanic', 'waveform']), default='banana')
+@click.option('--fold', type=int, default=42)
 @click.option('--nproc', type=click.IntRange(0,32), default=1)
 @click.option('--nparticles', type=int, default=10)
 @click.option('--stepsize', type=float, default=1e-3)
@@ -103,7 +103,7 @@ def plot_alpha_hist(df, vis, plot_title, timestep_between):
 @click.option('--wasserstein/--no-wasserstein', default=False)
 def make_plots(dataset, nproc, nparticles, stepsize, exchange, wasserstein, **kwargs):
     # load run results
-    results_dir = get_results_dir(dataset, nproc, nparticles, stepsize, exchange, wasserstein)
+    results_dir = get_results_dir(dataset, fold, nproc, nparticles, stepsize, exchange, wasserstein)
     df = pd.concat(map(pd.read_pickle, glob(os.path.join(results_dir, 'shard-*.pkl'))))
 
     # Post-process and plot
@@ -111,16 +111,17 @@ def make_plots(dataset, nproc, nparticles, stepsize, exchange, wasserstein, **kw
 
     plot_title = 'logreg_{} {} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
                     dataset, 'test_acc', nproc, nparticles, exchange, wasserstein, stepsize)
-    plot_test_acc(df, vis, plot_title, dataset)
+    plot_test_acc(df, vis, plot_title, dataset, fold)
 
-    TIMESTEPS_BETWEEN_KDE_PLOTS = 10
-    plot_title = lambda t: 'logreg_{} {} t={} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
-                    dataset, 'particles_w1_w2', t, nproc, nparticles, exchange, wasserstein, stepsize)
-    plot_w_scatters(df, vis, plot_title, TIMESTEPS_BETWEEN_KDE_PLOTS)
+    if 'dataset' == 'banana':
+        TIMESTEPS_BETWEEN_KDE_PLOTS = 10
+        plot_title = lambda t: 'logreg_{}_{} {} t={} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
+                        dataset, fold, 'particles_w1_w2', t, nproc, nparticles, exchange, wasserstein, stepsize)
+        plot_w_scatters(df, vis, plot_title, TIMESTEPS_BETWEEN_KDE_PLOTS)
 
-    plot_title = lambda t: 'logreg_{} {} t={} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
-                    dataset, 'particles_alpha', t, nproc, nparticles, exchange, wasserstein, stepsize)
-    plot_alpha_hist(df, vis, plot_title, TIMESTEPS_BETWEEN_KDE_PLOTS)
+        plot_title = lambda t: 'logreg_{}_{} {} t={} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
+                        dataset, fold, 'particles_alpha', t, nproc, nparticles, exchange, wasserstein, stepsize)
+        plot_alpha_hist(df, vis, plot_title, TIMESTEPS_BETWEEN_KDE_PLOTS)
 
 if __name__ == '__main__':
     make_plots()

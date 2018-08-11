@@ -20,14 +20,13 @@ from definitions import DATA_DIR, RESULTS_DIR
 import dsvgd
 from logreg_plots import get_results_dir, make_plots
 
-def run(rank, num_shards, dataset_name, nparticles, niter, stepsize, exchange, wasserstein):
+def run(rank, num_shards, dataset_name, fold, nparticles, niter, stepsize, exchange, wasserstein):
     torch.manual_seed(rank)
 
     # Define model
     # Load data
     mat = loadmat(os.path.join(DATA_DIR, 'benchmarks.mat'))
     dataset = mat[dataset_name][0, 0]
-    fold = 42 # use 42 train/test split
 
     # split #, instance, features/label
     x_train = torch.from_numpy(dataset[0][dataset[2] - 1][fold]).to(torch.float)
@@ -89,16 +88,16 @@ def run(rank, num_shards, dataset_name, nparticles, niter, stepsize, exchange, w
 
     pd.DataFrame(data).to_pickle(
             os.path.join(
-                get_results_dir(dataset_name, num_shards, nparticles, stepsize, exchange, wasserstein),
+                get_results_dir(dataset_name, fold, num_shards, nparticles, stepsize, exchange, wasserstein),
                 'shard-{}.pkl'.format(rank)))
 
-def init_distributed(rank, dataset_name, nparticles, niter, stepsize, exchange, wasserstein):
+def init_distributed(rank, dataset_name, fold, nparticles, niter, stepsize, exchange, wasserstein):
     try:
         dist.init_process_group('tcp', rank=rank, init_method='env://')
 
         rank = dist.get_rank()
         num_shards = dist.get_world_size()
-        run(rank, num_shards, dataset_name, nparticles, niter, stepsize, exchange, wasserstein)
+        run(rank, num_shards, dataset_name, fold, nparticles, niter, stepsize, exchange, wasserstein)
     except Exception as e:
         print(traceback.format_exc())
         raise e
@@ -106,6 +105,7 @@ def init_distributed(rank, dataset_name, nparticles, niter, stepsize, exchange, 
 @click.command()
 @click.option('--dataset', type=click.Choice([
     'banana', 'diabetis', 'german', 'image', 'splice', 'titanic', 'waveform']), default='banana')
+@click.option('--fold', type=int, default=42)
 @click.option('--nproc', type=click.IntRange(0,32), default=1)
 @click.option('--nparticles', type=int, default=10)
 @click.option('--niter', type=int, default=100)
@@ -116,15 +116,15 @@ def init_distributed(rank, dataset_name, nparticles, niter, stepsize, exchange, 
 @click.option('--master_port', default=29500, type=int)
 @click.option('--plots/--no-plots', default=True)
 @click.pass_context
-def cli(ctx, dataset, nproc, nparticles, niter, stepsize, exchange, wasserstein, master_addr, master_port, plots):
+def cli(ctx, dataset, fold, nproc, nparticles, niter, stepsize, exchange, wasserstein, master_addr, master_port, plots):
     # clean out any previous results files
-    results_dir = get_results_dir(dataset, nproc, nparticles, stepsize, exchange, wasserstein)
+    results_dir = get_results_dir(dataset, fold, nproc, nparticles, stepsize, exchange, wasserstein)
     if os.path.isdir(results_dir):
         shutil.rmtree(results_dir)
     os.mkdir(results_dir)
 
     if nproc == 1:
-        run(0, 1, dataset, nparticles, niter, stepsize, exchange, wasserstein)
+        run(0, 1, dataset, fold, nparticles, niter, stepsize, exchange, wasserstein)
     else:
         os.environ['MASTER_ADDR'] = master_addr
         os.environ['MASTER_PORT'] = str(master_port)
@@ -132,7 +132,7 @@ def cli(ctx, dataset, nproc, nparticles, niter, stepsize, exchange, wasserstein,
 
         processes = []
         for rank in range(nproc):
-            p = Process(target=init_distributed, args=(rank, dataset, nparticles, niter, stepsize, exchange, wasserstein,))
+            p = Process(target=init_distributed, args=(rank, dataset, fold, nparticles, niter, stepsize, exchange, wasserstein,))
             p.start()
             processes.append(p)
 
