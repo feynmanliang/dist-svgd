@@ -7,6 +7,7 @@ import scipy.optimize
 
 class DistSampler(object):
     def __init__(self, rank, num_shards, logp, kernel, particles,
+            N_local, N_global,
             exchange_particles=True, exchange_scores=True, include_wasserstein=True):
         """Initializes a distributed SVGD sampler.
 
@@ -16,6 +17,8 @@ class DistSampler(object):
             kernel - kernel function
             logp - log likelihood function
             particles - (num_particles, d) array of all the initial particles
+            n_local - size of local partition
+            n_global - total dataset size
             exchange_particles - whether to globally exchange particles per iteration
             exchange_scores - whether to globally exchange score functions
             include_wasserstein - whether to include a wasserstein term
@@ -25,8 +28,9 @@ class DistSampler(object):
         self._num_shards = num_shards
         self._logp = logp
         self._kernel = kernel
+        self._N_local = N_local
+        self._N_global = N_global
         self._d = particles.shape[1]
-        self._particles = particles
         self._exchange_particles = exchange_particles
         self._exchange_scores = exchange_scores
         self._include_wasserstein = include_wasserstein
@@ -38,6 +42,7 @@ class DistSampler(object):
         # NOTE: this will drop particles if not divisible by num_shards
         self._particles_per_shard = int(particles.shape[0] / self._num_shards)
         self._num_particles = self._particles_per_shard * self._num_shards
+        self._particles = particles[:self._particles_per_shard*self._num_particles]
 
         (start, end) = self._particle_idx_range(rank)
         self._particle_start_idx = start
@@ -70,7 +75,7 @@ class DistSampler(object):
         return _x.grad
 
     def _dlogp(self, x):
-        "Returns \nabla_x log p(x) for particle `x` on data partition owned by this shard"
+        "Returns entire data score function estimator using local data."
         _x = x.detach()
         _x.requires_grad_(True)
         self._logp(_x).backward()
@@ -85,10 +90,13 @@ class DistSampler(object):
         for (i, other_particle) in enumerate(interacting_particles):
             total += self._dkernel(other_particle, particle)
 
+            # TODO?: scale score function estimate up or down
             if self._exchange_scores:
-                total += self._kernel(other_particle, particle) * self._scores[i,:]
+                total += self._kernel(other_particle, particle) * self._scores[i]
             else:
-                total += self._kernel(other_particle, particle) * self._dlogp(other_particle)
+                total += (self._kernel(other_particle, particle)
+                        * (self._N_global / self._N_local)
+                        * self._dlogp(other_particle))
 
         return (1.0 / interacting_particles.shape[0]) * total
 
@@ -144,8 +152,10 @@ class DistSampler(object):
     def _exchange_all_particles(self):
         "Gathers all particles to all shards."
         tensor_list = [torch.empty(self._particles_per_shard, self._d) for _ in range(self._num_shards)]
-        dist.all_gather(tensor_list, self.particles)
-        self._particles = torch.cat(tensor_list)
+        # TODO: Pytorch bug? needs to copy self.particles or else gather result is wrong
+        dist.all_gather(tensor_list, torch.tensor(self.particles))
+        # TODO: Pytorch bug? Needs [:] for this to work
+        self._particles[:] = torch.cat(tensor_list)
 
     def _exchange_all_scores(self):
         """Exchange score function values.
@@ -154,7 +164,9 @@ class DistSampler(object):
         contain the globally consistent particle values.
         """
         for (i, particle) in enumerate(self._particles):
-            self._scores[i,:] = self._dlogp(particle)
+            # ith row of self._scores contains score function estimate using local data
+            self._scores[i] = self._dlogp(particle)
+        # reduce performs sum over all data partitions, yielding global value
         dist.all_reduce(self._scores, op=dist.reduce_op.SUM)
 
     def make_step(self, step_size, h=1.0):

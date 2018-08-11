@@ -3,6 +3,7 @@ Run with `python -m torch.distributed.launch --nproc_per_node=2 experiments/dist
 """
 import os
 import shutil
+import traceback
 
 import click
 import pandas as pd
@@ -13,7 +14,7 @@ import torch.distributed as dist
 from torch.distributions.gamma import Gamma
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.distributions.normal import Normal
-from torch.multiprocessing import Process
+from multiprocessing import Process
 
 from definitions import DATA_DIR, RESULTS_DIR
 import dsvgd
@@ -45,6 +46,7 @@ def run(rank, num_shards, nparticles, niter, stepsize, exchange, wasserstein):
         return (samples_per_shard * rank, samples_per_shard * (rank+1))
 
     def logp(shard, x):
+        "Estimate of full log likelihood using partition's local data."
         # Get shard-local data
         # NOTE: this will drop data if not divisible by num_shards
         shard_start_idx, shard_end_idx = data_idx_range(shard)
@@ -55,7 +57,7 @@ def run(rank, num_shards, nparticles, niter, stepsize, exchange, wasserstein):
         w = x[1:3].reshape((2,))
         logp = alpha_prior.log_prob(alpha)
         logp += w_prior(alpha).log_prob(w)
-        logp += -torch.log(1. + torch.exp(-1.*torch.matmul(t_train_local * x_train_local, w))).sum()
+        logp += -torch.log(1. + torch.exp(-1.*torch.mv(t_train_local * x_train_local, w))).sum()
         return logp
 
     def kernel(x, y):
@@ -67,9 +69,10 @@ def run(rank, num_shards, nparticles, niter, stepsize, exchange, wasserstein):
     particles = torch.cat([make_sample() for _ in range(nparticles)], dim=1).t()
 
     dist_sampler = dsvgd.DistSampler(rank, num_shards, (lambda x: logp(rank, x)), kernel, particles,
-           exchange_particles=exchange in ['all_particles', 'all_scores'],
-           exchange_scores=exchange is 'all_scores',
-           include_wasserstein=wasserstein)
+            samples_per_shard, samples_per_shard*num_shards,
+            exchange_particles=exchange in ['all_particles', 'all_scores'],
+            exchange_scores=exchange == 'all_scores',
+            include_wasserstein=wasserstein)
 
     data = []
     for l in range(niter):
@@ -89,11 +92,15 @@ def run(rank, num_shards, nparticles, niter, stepsize, exchange, wasserstein):
     pd.DataFrame(data).to_pickle(os.path.join(RESULTS_DIR, 'shard-{}.pkl'.format(rank)))
 
 def init_distributed(rank, nparticles, niter, stepsize, exchange, wasserstein):
-    dist.init_process_group('tcp', rank=rank, init_method='env://')
+    try:
+        dist.init_process_group('tcp', rank=rank, init_method='env://')
 
-    rank = dist.get_rank()
-    num_shards = dist.get_world_size()
-    run(rank, num_shards, nparticles, niter, stepsize, exchange, wasserstein)
+        rank = dist.get_rank()
+        num_shards = dist.get_world_size()
+        run(rank, num_shards, nparticles, niter, stepsize, exchange, wasserstein)
+    except Exception as e:
+        print(traceback.format_exc())
+        raise e
 
 @click.command()
 @click.option('--nproc', type=click.IntRange(0,32), default=1)
