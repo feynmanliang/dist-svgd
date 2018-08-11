@@ -16,6 +16,12 @@ import visdom
 from definitions import RESULTS_DIR, DATA_DIR
 import dsvgd
 
+def get_results_dir(dataset, nproc, nparticles, stepsize, exchange, wasserstein):
+    subdir = 'logreg_{}-nshards={}-nparticles={}-exchange={}-wasserstein={}-stepsize={:.0e}'.format(
+            dataset, nproc, nparticles, exchange, wasserstein, stepsize)
+    return os.path.join(RESULTS_DIR, subdir)
+
+
 def plot_test_acc(df, vis, plot_title, dataset_name):
     # Load data
     mat = loadmat(os.path.join(DATA_DIR, 'benchmarks.mat'))
@@ -60,6 +66,7 @@ def plot_test_acc(df, vis, plot_title, dataset_name):
                 title=plot_title,
                 legend=test_accs.drop('timestep', axis=1).columns.values.tolist(),
                 ))
+
 def plot_w_scatters(df, vis, plot_title, timestep_between):
     # Particle positions
     for t in range(0, df['timestep'].max(), timestep_between):
@@ -74,6 +81,7 @@ def plot_w_scatters(df, vis, plot_title, timestep_between):
                     ytickmax=2,
                     title=plot_title(t),
                     ))
+
 def plot_alpha_hist(df, vis, plot_title, timestep_between):
     for t in range(0, df['timestep'].max(), timestep_between):
         vis.histogram(
@@ -94,21 +102,22 @@ def plot_alpha_hist(df, vis, plot_title, timestep_between):
 def make_plots(nproc, nparticles, stepsize, exchange, wasserstein, **kwargs):
     # load run results
     dataset_name = 'banana'
-    df = pd.concat(map(pd.read_pickle, glob(os.path.join(RESULTS_DIR, 'shard-*.pkl'))))
+    results_dir = get_results_dir(dataset_name, nproc, nparticles, stepsize, exchange, wasserstein)
+    df = pd.concat(map(pd.read_pickle, glob(os.path.join(results_dir, 'shard-*.pkl'))))
 
     # Post-process and plot
     vis = visdom.Visdom()
 
-    plot_title = 'logreg {} {} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
+    plot_title = 'logreg_{} {} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
                     dataset_name, 'test_acc', nproc, nparticles, exchange, wasserstein, stepsize)
     plot_test_acc(df, vis, plot_title, dataset_name)
 
     TIMESTEPS_BETWEEN_KDE_PLOTS = 10
-    plot_title = lambda t: 'logreg {} {} t={} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
+    plot_title = lambda t: 'logreg_{} {} t={} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
                     dataset_name, t, 'particles_w1_w2', t, nproc, nparticles, exchange, wasserstein, stepsize)
     plot_w_scatters(df, vis, plot_title, TIMESTEPS_BETWEEN_KDE_PLOTS)
 
-    plot_title = lambda t: 'logreg {} {} t={} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
+    plot_title = lambda t: 'logreg_{} {} t={} nshards={} nparticles={} exchange={} wasserstein={} stepsize={:.0e}'.format(
                     dataset_name, t, 'particles_alpha', t, nproc, nparticles, exchange, wasserstein, stepsize)
     plot_alpha_hist(df, vis, plot_title, TIMESTEPS_BETWEEN_KDE_PLOTS)
 

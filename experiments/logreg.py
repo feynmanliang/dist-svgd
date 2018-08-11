@@ -18,8 +18,7 @@ from multiprocessing import Process
 
 from definitions import DATA_DIR, RESULTS_DIR
 import dsvgd
-
-from logreg_plots import make_plots
+from logreg_plots import get_results_dir, make_plots
 
 def run(rank, num_shards, nparticles, niter, stepsize, exchange, wasserstein):
     torch.manual_seed(rank)
@@ -89,7 +88,10 @@ def run(rank, num_shards, nparticles, niter, stepsize, exchange, wasserstein):
     for i in range(len(dist_sampler.particles)):
         data.append(pd.Series([l+1, torch.tensor(dist_sampler.particles[i]).numpy()], index=['timestep', 'value']))
 
-    pd.DataFrame(data).to_pickle(os.path.join(RESULTS_DIR, 'shard-{}.pkl'.format(rank)))
+    pd.DataFrame(data).to_pickle(
+            os.path.join(
+                get_results_dir('banana', num_shards, nparticles, stepsize, exchange, wasserstein),
+                'shard-{}.pkl'.format(rank)))
 
 def init_distributed(rank, nparticles, niter, stepsize, exchange, wasserstein):
     try:
@@ -114,9 +116,10 @@ def init_distributed(rank, nparticles, niter, stepsize, exchange, wasserstein):
 @click.pass_context
 def cli(ctx, nproc, nparticles, niter, stepsize, exchange, wasserstein, master_addr, master_port):
     # clean out any previous results files
-    if os.path.isdir(RESULTS_DIR):
-        shutil.rmtree(RESULTS_DIR)
-    os.mkdir(RESULTS_DIR)
+    results_dir = get_results_dir('banana', nproc, nparticles, stepsize, exchange, wasserstein)
+    if os.path.isdir(results_dir):
+        shutil.rmtree(results_dir)
+    os.mkdir(results_dir)
 
     if nproc == 1:
         run(0, 1, nparticles, niter, stepsize, exchange, wasserstein)
