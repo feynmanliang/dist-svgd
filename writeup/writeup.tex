@@ -1,0 +1,241 @@
+\documentclass{article}
+
+\usepackage{biblatex}
+\bibliography{refs.bib}
+
+\usepackage[letterpaper]{geometry}
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{hyperref}       % hyperlinks
+\usepackage{cleveref}
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+
+
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+\renewcommand{\algorithmicensure}{\textbf{Output:}}
+
+\newcommand{\DD}{\mathbb{D}}
+\newcommand{\cD}{\mathcal{D}}
+\newcommand{\ex}{\mathbb{E}}
+\newcommand{\cH}{\mathcal{H}}
+\newcommand{\cS}{\mathcal{S}}
+\newcommand{\tp}{\intercal}
+
+\title{Posterior sampling over partitioned data with Stein variational gradient descent.}
+\author{Feynman Liang, Qiang Liu, Michael Mahoney}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+
+Drawing samples from a posterior distribution $P(\theta \mid \mathcal{D})$ is a fundamental
+tool powering many applications of Bayesian statistics.
+Stein variational gradient descent (SVGD) \cite{liu2016stein} is a recently developed
+particle-based algorithm for performing posterior sampling from arbitrary distributions.
+
+Modern datasets are increasingly large, and in many problems of interest the data $X$
+does not fit on a single machine. In such environments, development of distributed algorithms
+which require only subsets of the data at each iteration are of particular interest. Furthermore,
+the increased communication costs incurred from network I/O between machines motivates
+the need for communication efficient algorithms.
+
+In this work, we propose a new extension to SVGD which can be applied when data
+and/or particles are partitioned across multiple machines. Our work closes the scalability
+gap for SVGD and enables it to scale to big datasets and a large number of potentially high
+dimensional particles.
+
+
+\section{Background}
+\label{sec:background}
+
+Given some probability measure $\nu$ with density $p$ (e.g.\ the posterior distribution $P(\theta\ mid \cD)$),
+we want to find a particle approximation $\{\theta_j\}_{j=1}^n$ whose empirical
+measure $\hat\mu_n = \frac{1}{n}\sum^{n}_{j=1} \delta_{\theta_j}$ converges
+weakly
+\begin{align}
+    \mu_n \Rightarrow \nu
+\end{align}
+
+SVGD does this by initialiing $\theta_j \overset{\sim}{\text{iid}} \mu$ and performs iterative updates
+\begin{align}
+    T_{\epsilon, \phi}(\theta) = \theta + \epsilon \phi(x)
+\end{align}
+The choice of $\phi$ should make the approximation better, and is formalized by the functional optimization
+\begin{align}
+    \max_{\phi \in \cH} \left\{
+        - \frac{d}{d\epsilon} KL(T \mu \mid \nu ) \mid_{\epsilon = 0} : \|\phi\|_\cH \leq 1
+    \right\}
+\end{align}
+where $\cH$ is a Banach space.
+
+\cite{liu2016stein} made the connection between this objective and the Stein operator from statistics
+\begin{align}
+    - \frac{d}{d\epsilon} KL(T \mu \mid \nu) \mid_{\epsilon = 0}
+    = \ex_\mu \cS_p \phi
+    \quad\text{where}\quad
+    \cS_p \phi(x) = \nabla \log p(x)^\tp \phi(x) + \nabla \cdot \phi(x)
+\end{align}
+
+The optimization thus is equivalent to
+\begin{align}
+    \DD(\mu \mid \nu) = \max_{\phi \in \cH} \left\{ \ex_\mu \cS_p \phi : \|\phi\|_\cH \leq 1 \right\}
+\end{align}
+which is called the \emph{Stein discrepancy}. Restricting $\cH$ to a RKHS renames this quantity
+to the \emph{Kernelized Stein discrepancy}.
+
+\cite{liu2016kernelized} showed that the optimal solution
+\begin{align}
+    \phi_{\mu,p}^*(\cdot) \propto \ex_{x \sim \mu} \left[
+        \nabla \log p(x) k(x, \cdot) + \nabla_x k(x, \cdot)
+    \right]
+\end{align}
+suggesting an iterative algorith given in \cref{alg:svgd}.
+
+\begin{algorithm}
+    \caption{The SVGD algorithm}
+    \label{alg:svgd}
+    \begin{algorithmic}
+        \REQUIRE{Likelihood $p(\cD \mid \theta)$, prior $p(\theta)$, and initial particles $\{\theta_i^0\}_{i=1}^n$}
+        \ENSURE{Particles $\{\theta_i\}_{i=1}^n$ approximating the posterior $p(\theta \mid \cD)$}
+        \FOR{iteration $\ell$}
+            \FOR{particle~$i=1$ \TO $n$} \STATE{
+                $\theta_i^{\ell+1} \leftarrow \theta_i^\ell + \epsilon_\ell \hat\phi^*(\theta_i^\ell)$
+                ~where~
+                $\hat\phi^*(\theta) = \frac{1}{n} \sum_{j=1}^n \left[
+                    k(\theta_j^\ell, \theta) \nabla_{\theta_j^\ell} [\log p(\cD \mid \theta_j^\ell) + \log p(\theta_j^\ell)]
+                    + \nabla_{\theta_j^\ell} k(\theta_j^\ell, \theta)
+                \right]$
+            }
+            \ENDFOR
+        \ENDFOR
+    \end{algorithmic}
+\end{algorithm}
+
+Notice that:
+\begin{enumerate}
+    \item The iteration over particles $i$ is embaressingly parallel
+    \item Each of the $n^2$ updates requires computing a score $\log p(\cD \mid \theta)$ over
+        the full dataset $\cD$
+\end{enumerate}
+
+
+\section{Distributed SVGD}
+\label{sec:distributed_svgd}
+
+The second observation motivates our first proposed method, which extends SVGD
+to the setting where $\cD = \sqcup_{s=1}^S \cD_s$ is partitioned across $s$ different shards.
+
+We make the following key assumption:
+\begin{enumerate}
+    \item Data is iid, so we can decompose $\log p(\cD \mid \theta) = \sum_{s=1}^S p(\cD_s \mid \theta)$
+    \item The set of particles $\{\theta_i\}_{i=1}^n$ can fit on a single machine
+\end{enumerate}
+
+Assumption 1 enables us to rewrite the computation for $\hat\phi^*(\theta)$ as
+\begin{align}
+    \hat\phi^*(\theta)
+    &= \frac{1}{n} \sum_{j=1}^n \left[
+        k(\theta_j^\ell, \theta) \left[
+            \sum_{s=1}^S \nabla_{\theta_j^\ell} \log p(\cD_s \mid \theta_j^\ell) + \nabla_{\theta_j^\ell} \log p(\theta_j^\ell)
+        \right]
+        + \nabla_{\theta_j^\ell} k(\theta_j^\ell, \theta)
+    \right]
+\end{align}
+
+Assumption 2 permits broadcasting of the set of particles $\theta_j$ across to each of the $s$ workers, leading
+to a map-reduce style distributed algorithm
+\begin{enumerate}
+    \item Master broadcast $\{\theta_j\}_{j=1}^n$ to all of the $s$ workers
+    \item Each worker computes a local score $\nabla_{\theta_j^\ell} \log p(\cD_s \mid \theta_j^\ell)$ (same dimensionality as $\{\theta_j\}_{j=1}^n$)
+    \item Results are grouped by particle $\theta_j$ and reduced (by summation) onto the master node, which performs the particle update
+\end{enumerate}
+
+\subsection{Analysis of communication complexity}
+\label{sub:analysis_of_communication_complexity}
+
+We assume that communication occurs point-to-point, nodes have their own
+upstream and downstream links, and that a barrier synchronization occurs at the
+end of each iteration. Such assumptions are realistic in distributed computing
+settings such as cloud environments where issues with large datasets are typically
+encountered.
+
+The communication complexity between two synchronization barriers is determined
+by the slowest node, so we focus attention on the bottleneck nodes.
+If $\theta$ is $p$-dimensional, the communication complexity of each iteration is
+\begin{align}
+    p n \times S + p n \times S
+\end{align}
+where the first term corresponds to the sequential broadcast of all particles through
+the master's upstream link and the latter to the reduction of all local scores through
+the master's downstream link.
+
+A $k$-wise tree-broadcast and reducecan be applied to lower communication costs
+to $2 p n k \log_k S$, but incurs an additional constant message
+serialization/deserialization overhead.
+
+\subsection{Partitioning particles to minimize communication bottleneck}
+\label{sub:partitioning_particles_to_minimize_communication_bottleneck}
+
+The previous algorithm exhibits a communication bottleneck on the master node,
+resulting in a higher communication cost per iteration. To avoid this
+bottleneck, we can exploit our first observation that the iteration over particles
+is trivially parallelizable. Rather than designating a master node,
+partition the particles equally across all nodes.
+In doing so, the broadcast is converted into an \texttt{all\_gather} and
+the reduce into an \texttt{all\_reduce}.
+
+By doing so, we avoid hot-spotting on the master and get communication cost
+\begin{align}
+    p (n/S) (S-1) + p (n/S) (S-1) + p n k \log_k S
+    \approx 2 p n + p n k \log_k S
+\end{align}
+
+\subsection{Stochastic approximations}%
+\label{sub:stochastic_approxmations}
+
+Treat partitions as subsampled minibatches (in reality we don't resample the minibatch)
+\begin{align}
+    \nabla_\theta \log p(\theta \mid \cD)
+    &= \nabla_\theta \log p(\theta) + \nabla_\theta \log p(\cD \mid \theta) \\
+    &\approx \nabla_\theta \log p(\theta) + \frac{\lvert \cD \rvert}{\lvert \cD_s \rvert} \nabla_\theta \log p(\cD_s \mid \theta)
+\end{align}
+
+Subsample the particle interactions using only local particles
+\begin{align}
+    \frac{1}{n} \sum^{n}_{j=1} \left[
+        k(x_j, x) \nabla_{x_j} \log p(x_j) + \nabla_{x_j} k(x_j, x)
+    \right]
+    \approx \frac{1}{\Omega} \sum_{j \in \Omega}  \left[
+        k(x_j, x) \nabla_{x_j} \log p(x_j) + \nabla_{x_j} k(x_j, x)
+    \right]
+\end{align}
+
+To prove: both LHS and RHS are empirical averages, concentration about mean.
+
+If $\Omega \subset [n]$ is sampled iid with replacement, then both are iid
+samples of the data $X$. If $f \leq B$, then Hoeffding's inequality gives
+\begin{align}
+    P(\sum_1^n f(X_i) - \ex f(X) \geq \alpha) \leq \exp \left( - \frac{\alpha^2}{2 n B^2}\right)
+\end{align}
+
+\section{Experiments}
+\label{sec:experiments}
+
+
+
+\printbibliography
+
+\end{document}
+

@@ -1,0 +1,88 @@
+% $ biblatex auxiliary file $
+% $ biblatex bbl format version 2.9 $
+% Do not modify the above lines!
+%
+% This is an auxiliary file used by the 'biblatex' package.
+% This file may safely be deleted. It will be recreated by
+% biber as required.
+%
+\begingroup
+\makeatletter
+\@ifundefined{ver@biblatex.sty}
+  {\@latex@error
+     {Missing 'biblatex' package}
+     {The bibliography requires the 'biblatex' package.}
+      \aftergroup\endinput}
+  {}
+\endgroup
+
+
+\refsection{0}
+  \datalist[entry]{nty/global//global/global}
+    \entry{liu2016kernelized}{inproceedings}{}
+      \name{author}{3}{}{%
+        {{hash=e8c0010ab32e4255b70bd8d9fefdf5cd}{%
+           family={Liu},
+           familyi={L\bibinitperiod},
+           given={Qiang},
+           giveni={Q\bibinitperiod}}}%
+        {{hash=4ee154247efd44bd9bd762630838b953}{%
+           family={Lee},
+           familyi={L\bibinitperiod},
+           given={Jason},
+           giveni={J\bibinitperiod}}}%
+        {{hash=5010abb47d34a51acdafb266a811dc5f}{%
+           family={Jordan},
+           familyi={J\bibinitperiod},
+           given={Michael},
+           giveni={M\bibinitperiod}}}%
+      }
+      \strng{namehash}{39f03a68636be1164fca0815520a5641}
+      \strng{fullhash}{39f03a68636be1164fca0815520a5641}
+      \strng{bibnamehash}{39f03a68636be1164fca0815520a5641}
+      \strng{authorbibnamehash}{39f03a68636be1164fca0815520a5641}
+      \strng{authornamehash}{39f03a68636be1164fca0815520a5641}
+      \strng{authorfullhash}{39f03a68636be1164fca0815520a5641}
+      \field{sortinit}{L}
+      \field{sortinithash}{2c7981aaabc885868aba60f0c09ee20f}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{booktitle}{International Conference on Machine Learning}
+      \field{title}{A kernelized Stein discrepancy for goodness-of-fit tests}
+      \field{year}{2016}
+      \field{pages}{276\bibrangedash 284}
+      \range{pages}{9}
+    \endentry
+    \entry{liu2016stein}{inproceedings}{}
+      \name{author}{2}{}{%
+        {{hash=e8c0010ab32e4255b70bd8d9fefdf5cd}{%
+           family={Liu},
+           familyi={L\bibinitperiod},
+           given={Qiang},
+           giveni={Q\bibinitperiod}}}%
+        {{hash=63d92a7422ae89c6fc92636092efb6cc}{%
+           family={Wang},
+           familyi={W\bibinitperiod},
+           given={Dilin},
+           giveni={D\bibinitperiod}}}%
+      }
+      \strng{namehash}{909ad28dee0e35fd1d90d3a176e5d110}
+      \strng{fullhash}{909ad28dee0e35fd1d90d3a176e5d110}
+      \strng{bibnamehash}{909ad28dee0e35fd1d90d3a176e5d110}
+      \strng{authorbibnamehash}{909ad28dee0e35fd1d90d3a176e5d110}
+      \strng{authornamehash}{909ad28dee0e35fd1d90d3a176e5d110}
+      \strng{authorfullhash}{909ad28dee0e35fd1d90d3a176e5d110}
+      \field{sortinit}{L}
+      \field{sortinithash}{2c7981aaabc885868aba60f0c09ee20f}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{booktitle}{Advances In Neural Information Processing Systems}
+      \field{title}{Stein variational gradient descent: A general purpose bayesian inference algorithm}
+      \field{year}{2016}
+      \field{pages}{2378\bibrangedash 2386}
+      \range{pages}{9}
+    \endentry
+  \enddatalist
+\endrefsection
+\endinput
+

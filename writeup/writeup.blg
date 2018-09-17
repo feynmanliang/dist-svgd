@@ -1,0 +1,15 @@
+[0] Config.pm:302> INFO - This is Biber 2.11
+[0] Config.pm:305> INFO - Logfile is 'writeup.blg'
+[45] biber-darwin:313> INFO - === Wed Sep 12, 2018, 20:28:50
+[71] Biber.pm:371> INFO - Reading 'writeup.bcf'
+[155] Biber.pm:857> INFO - Found 2 citekeys in bib section 0
+[166] Biber.pm:3976> INFO - Processing section 0
+[180] Biber.pm:4136> INFO - Looking for bibtex format file 'refs.bib' for section 0
+[182] bibtex.pm:1500> INFO - LaTeX decoding ...
+[186] bibtex.pm:1316> INFO - Found BibTeX data source 'refs.bib'
+[206] UCollate.pm:68> INFO - Overriding locale 'en-US' defaults 'variable = shifted' with 'variable = non-ignorable'
+[206] UCollate.pm:68> INFO - Overriding locale 'en-US' defaults 'normalization = NFD' with 'normalization = prenormalized'
+[206] Biber.pm:3804> INFO - Sorting list 'nty/global//global/global' of type 'entry' with template 'nty' and locale 'en-US'
+[206] Biber.pm:3810> INFO - No sort tailoring available for locale 'en-US'
+[209] bbl.pm:617> INFO - Writing 'writeup.bbl' with encoding 'UTF-8'
+[210] bbl.pm:720> INFO - Output to writeup.bbl
